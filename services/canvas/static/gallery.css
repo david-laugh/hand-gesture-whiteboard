@@ -1,0 +1,16 @@
+.gallery-page { max-width: 960px; }
+.gallery-page h1 small { font-size: .9rem; font-weight: 400; color: #a9b8c9; margin-left: .4rem; }
+.gallery-help { color: #a9b8c9; font-size: .9rem; margin: .5rem 0 1.25rem; }
+.gallery { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
+.gallery-item { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 18px; align-items: center; padding: 12px; border: 1px solid #2f3d4c; border-radius: 10px; background: #1e2a36; }
+.gallery-item.live { border: 2px solid #d3993a; }
+.gallery-item img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #fff; border-radius: 6px; }
+.gallery-info { min-width: 0; display: flex; flex-direction: column; gap: .45rem; }
+.gallery-title { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.gallery-meta { margin: 0; color: #a9b8c9; font-size: .88rem; overflow-wrap: anywhere; }
+.gallery-badge { align-self: flex-start; padding: .15rem .55rem; border-radius: 999px; background: #d3993a; color: #17202a; font-size: .78rem; font-weight: 700; }
+.gallery-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .25rem; }
+.gallery-actions a { padding: .4rem .75rem; border: 1px solid #53606f; border-radius: 5px; background: #263544; color: #edf2f7; text-decoration: none; font-size: .9rem; }
+.gallery-actions a:hover { border-color: #d3993a; }
+.gallery-empty { color: #a9b8c9; padding: 2rem 0; text-align: center; }
+@media (max-width: 640px) { .gallery-item { grid-template-columns: minmax(0, 1fr); } }

@@ -8,7 +8,7 @@
   <script type="module" src="/static/board.js"></script>
 </head>
 <body>
-  <header><h1>실시간 그림판</h1><p id="status">연결 중</p></header>
+  <header><h1>실시간 그림판</h1><p><span id="status">연결 중</span> <a id="saved" hidden target="_blank" rel="noopener"></a> <a href="/gallery" target="_blank" rel="noopener">저장된 그림</a></p></header>
   <section class="tools" aria-label="그리기 도구">
     <button id="pen" class="selected" type="button">펜</button><button id="eraser" type="button">지우개</button>
     <label>펜 굵기 <input id="pen-size" type="range" min="2" max="60" value="8"><output id="pen-size-value">8 px</output></label>
@@ -30,6 +30,6 @@
       <small id="color-help">예: #172554 · Enter 또는 입력창 밖으로 이동하면 적용</small>
     </fieldset>
   </section>
-  <main><canvas id="board" width="1280" height="720"></canvas><div id="cursor" aria-hidden="true"></div><p id="empty">Gesture MQTT 메시지를 기다리고 있습니다.</p></main>
+  <main><canvas id="board" width="1280" height="720"></canvas><canvas id="skeleton" width="1280" height="720" aria-hidden="true"></canvas><div id="cursor" aria-hidden="true"></div></main>
 </body>
 </html>
