@@ -59,6 +59,32 @@ def no_hand_frame(path: Path) -> bytes:
     return encode_jpeg(cv2.resize(wall, (FRAME_W, FRAME_H)))
 
 
+def gateway_packet(session_id: str, frame_id: int, jpeg: bytes, captured_at_ms: int | None = None) -> bytes:
+    """Build the MQTT payload the way services/gateway publishes it (FrameMessage + JPEG)."""
+    import json
+    import struct
+    import time
+    import uuid
+
+    now = int(time.time() * 1000)
+    meta = {
+        "frame_id": frame_id,
+        "captured_at_ms": now if captured_at_ms is None else captured_at_ms,
+        "width": FRAME_W,
+        "height": FRAME_H,
+        "schema_version": "1.0.0",
+        "message_type": "frame",
+        "trace_id": uuid.uuid4().hex,
+        "session_id": session_id,
+        "timestamp_ms": now,
+        "received_at_ms": now,
+        "byte_length": len(jpeg),
+        "content_type": "image/jpeg",
+    }
+    header = json.dumps(meta, separators=(",", ":")).encode()
+    return struct.pack(">I", len(header)) + header + jpeg
+
+
 def sliding_sequence(path: Path, count: int = 30, start_y: int = HAND_CROP_Y, step: int = 6) -> list[bytes]:
     bgr = load_bgr(path)
     return [encode_jpeg(_crop(bgr, start_y + i * step)) for i in range(count)]

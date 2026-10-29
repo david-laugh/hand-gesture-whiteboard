@@ -34,6 +34,9 @@ class FrameMeta:
     width: int | None = None
     height: int | None = None
     encoding: str = "jpeg"
+    # Issued by the gateway (MQTT input). Kept for vision logs/metrics only: the agreed
+    # vision → gesture message has no trace_id field.
+    trace_id: str | None = None
 
 
 @dataclass(frozen=True)
