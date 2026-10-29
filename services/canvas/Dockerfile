@@ -14,6 +14,4 @@ COPY . .
 
 EXPOSE 8003
 
-# Scaffold placeholder: no application yet.
-# TODO: CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8003"]
-CMD ["sleep", "infinity"]
+CMD ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8003"]

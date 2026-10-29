@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>실시간 그림판</title>
+  <link rel="stylesheet" href="/static/board.css">
+  <script type="module" src="/static/board.js"></script>
+</head>
+<body>
+  <header><h1>실시간 그림판</h1><p id="status">연결 중</p></header>
+  <section class="tools" aria-label="그리기 도구">
+    <button id="pen" class="selected" type="button">펜</button><button id="eraser" type="button">지우개</button>
+    <label>펜 굵기 <input id="pen-size" type="range" min="2" max="60" value="8"><output id="pen-size-value">8 px</output></label>
+    <label>지우개 굵기 <input id="eraser-size" type="range" min="4" max="100" value="30"><output id="eraser-size-value">30 px</output></label>
+    <fieldset class="color-tools" id="color-tools">
+      <legend>펜 색상</legend>
+      <div class="palette" aria-label="기본 색상">
+        <button class="color-swatch selected" type="button" data-color="#172554" aria-label="남색" title="남색"></button>
+        <button class="color-swatch" type="button" data-color="#dc2626" aria-label="빨강" title="빨강"></button>
+        <button class="color-swatch" type="button" data-color="#ea580c" aria-label="주황" title="주황"></button>
+        <button class="color-swatch" type="button" data-color="#ca8a04" aria-label="노랑" title="노랑"></button>
+        <button class="color-swatch" type="button" data-color="#16a34a" aria-label="초록" title="초록"></button>
+        <button class="color-swatch" type="button" data-color="#0891b2" aria-label="하늘" title="하늘"></button>
+        <button class="color-swatch" type="button" data-color="#7c3aed" aria-label="보라" title="보라"></button>
+        <button class="color-swatch" type="button" data-color="#111827" aria-label="검정" title="검정"></button>
+      </div>
+      <label class="color-picker-label">색상 맵 <input id="pen-color-picker" type="color" value="#172554" aria-label="펜 색상 맵"></label>
+      <label class="hex-label">HEX <input id="pen-color-hex" type="text" value="#172554" maxlength="7" spellcheck="false" aria-describedby="color-help"><span id="color-preview" aria-hidden="true"></span></label>
+      <small id="color-help">예: #172554 · Enter 또는 입력창 밖으로 이동하면 적용</small>
+    </fieldset>
+  </section>
+  <main><canvas id="board" width="1280" height="720"></canvas><div id="cursor" aria-hidden="true"></div><p id="empty">Gesture MQTT 메시지를 기다리고 있습니다.</p></main>
+</body>
+</html>
