@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0.0",
+  "message_type": "landmarks",
+  "trace_id": "7f3c2a9e-4b1d-4e8a-9c6f-2d5e8b1a0c37",
+  "session_id": "sess-01",
+  "frame_id": 1043,
+  "timestamp_ms": 1793260800156,
+  "image_width": 640,
+  "image_height": 480,
+  "hands": [],
+  "vision_ms": 14.8,
+  "model": "hand_landmarker.task@float16"
+}
