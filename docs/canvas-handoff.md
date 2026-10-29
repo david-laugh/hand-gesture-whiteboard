@@ -42,6 +42,9 @@ hgw/v1/canvas/{session_id}
 - 위치 low-pass smoothing과 선형 보간
 - HTTP `POST /v1/apply` 및 `GET /v1/sessions/{session_id}/export.png`
 - MQTT health endpoint `GET /healthz`
+- `http://localhost:8003/?session_id=<id>` 실시간 그림판 UI
+- 그림판의 펜·지우개·굵기 제어. UI command도 `/ws/control` → MQTT gesture topic을 거친다.
+- `/ws/board` session snapshot과 실시간 CanvasMessage broadcast
 
 ## 점 끊김 보강
 
@@ -78,5 +81,6 @@ PYTHONPATH=services/canvas python -m unittest discover -s services/canvas/tests 
 
 1. Gesture 서비스가 `hgw/v1/gestures/{session_id}`에 schema-valid `GestureMessage`를 발행한다.
 2. Gateway 또는 browser renderer가 `hgw/v1/canvas/{session_id}`를 구독하고 `CanvasMessage.operations`를 렌더링한다.
+   Canvas 자체 그림판은 이미 `/ws/board`로 동일 operation을 렌더링하므로, C 연동 전에도 펜/지우개 UI로 MQTT 경로를 시험할 수 있다.
 3. 전체 MQTT 구성은 별도 승인 후 `compose.yaml`에 broker, Canvas command, topic 환경 변수를 추가한다.
 4. 다중 Canvas replica가 필요하면 session affinity나 외부 session store가 필요하다. 현재 상태는 container 메모리에 있다.

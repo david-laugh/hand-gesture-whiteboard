@@ -1,0 +1,5 @@
+:root { font-family: system-ui, "Apple SD Gothic Neo", sans-serif; background: #17202a; color: #edf2f7; }
+* { box-sizing: border-box; } body { margin: 0 auto; max-width: 1440px; padding: 20px; }
+header { display: flex; justify-content: space-between; align-items: baseline; } h1 { margin: 0; font-size: 1.35rem; } #status { color: #a9b8c9; }
+.tools { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 1rem 0; }.tools button { border: 1px solid #53606f; border-radius: 5px; padding: .5rem .75rem; background: #263544; color: #edf2f7; font: inherit; }.tools button.selected { background: #d3993a; color: #17202a; border-color: #d3993a; font-weight: 700; }.tools label { margin-left: .5rem; display: flex; align-items: center; gap: .5rem; }.tools output { min-width: 3.5rem; color: #cbd5df; }
+main { position: relative; } canvas { display: block; width: 100%; background: #fff; border-radius: 8px; aspect-ratio: 16 / 9; } #empty { position: absolute; inset: 0; display: grid; place-content: center; color: #53606f; pointer-events: none; }

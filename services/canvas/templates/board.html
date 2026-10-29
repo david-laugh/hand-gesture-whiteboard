@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>실시간 그림판</title>
+  <link rel="stylesheet" href="/static/board.css">
+  <script type="module" src="/static/board.js"></script>
+</head>
+<body>
+  <header><h1>실시간 그림판</h1><p id="status">연결 중</p></header>
+  <section class="tools" aria-label="그리기 도구">
+    <button id="pen" class="selected" type="button">펜</button><button id="eraser" type="button">지우개</button>
+    <label>굵기 <input id="size" type="range" min="2" max="60" value="8"><output id="size-value">8 px</output></label>
+  </section>
+  <main><canvas id="board" width="1280" height="720"></canvas><p id="empty">Gesture MQTT 메시지를 기다리고 있습니다.</p></main>
+</body>
+</html>

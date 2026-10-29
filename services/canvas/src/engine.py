@@ -125,3 +125,21 @@ class CanvasEngine:
                 "timestamp_ms": now_ms(), "sequence": state.sequence, "operations": operations,
                 "history": {"undo_depth": len(state.order), "redo_depth": len(state.redo)},
                 "canvas_ms": (time.perf_counter() - started) * 1000}
+
+    def snapshot(self, session_id):
+        """Return replayable operations for a browser joining an existing session."""
+        state = self.sessions.get(session_id)
+        if not state:
+            return {"sequence": -1, "operations": [], "view": {"scale": 1, "offset": {"x": 0, "y": 0}}}
+        operations = []
+        for stroke in state.strokes.values():
+            if not stroke.visible or not stroke.points:
+                continue
+            prefix = "erase" if stroke.erase else "stroke"
+            operations.append({"type": f"{prefix}_begin", "stroke_id": stroke.stroke_id,
+                               "points": [stroke.points[0]], "style": stroke.style})
+            if len(stroke.points) > 1:
+                operations.append({"type": f"{prefix}_append", "stroke_id": stroke.stroke_id,
+                                   "points": stroke.points[1:]})
+            operations.append({"type": f"{prefix}_end", "stroke_id": stroke.stroke_id})
+        return {"sequence": state.sequence, "operations": operations, "view": state.view}

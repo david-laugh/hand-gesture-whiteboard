@@ -25,3 +25,11 @@ class CanvasEngineTests(unittest.TestCase):
         redo = engine.apply(gesture("REDO", 2))
         self.assertEqual(undo["operations"][0]["type"], "remove_stroke")
         self.assertEqual(redo["operations"][0]["type"], "restore_stroke")
+
+    def test_snapshot_replays_existing_stroke(self):
+        engine = CanvasEngine()
+        engine.apply(gesture("DRAW_START", 0, {"x": .2, "y": .2}, stroke_id="line"))
+        engine.apply(gesture("DRAW_MOVE", 1, {"x": .3, "y": .2}, stroke_id="line"))
+        snapshot = engine.snapshot("session")
+        self.assertEqual(snapshot["operations"][0]["type"], "stroke_begin")
+        self.assertEqual(snapshot["operations"][1]["type"], "stroke_append")

@@ -1,0 +1,77 @@
+const board = document.getElementById('board');
+const context = board.getContext('2d');
+const strokes = new Map();
+const sessionId = new URLSearchParams(location.search).get('session_id') || 'default';
+let snapshotSequence = -1;
+let controlSocket, tool = 'pen', strokeId, drawing = false;
+
+function draw() {
+  context.clearRect(0, 0, board.width, board.height);
+  context.lineCap = context.lineJoin = 'round';
+  for (const stroke of strokes.values()) {
+    if (!stroke.points.length) continue;
+    const [first, ...rest] = stroke.points;
+    context.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
+    context.strokeStyle = context.fillStyle = stroke.style.color || '#172554';
+    context.lineWidth = stroke.style.width || (stroke.erase ? 30 : 4);
+    context.beginPath(); context.moveTo(first.x, first.y);
+    if (rest.length) { for (const point of rest) context.lineTo(point.x, point.y); context.stroke(); }
+    else { context.arc(first.x, first.y, context.lineWidth / 2, 0, Math.PI * 2); context.fill(); }
+  }
+  context.globalCompositeOperation = 'source-over';
+}
+
+function apply(operations, reset = false) {
+  if (reset) strokes.clear();
+  for (const operation of operations) {
+    if (operation.type === 'clear') strokes.clear();
+    else if (operation.type.endsWith('_begin')) strokes.set(operation.stroke_id, {points: [...operation.points], style: operation.style || {}, erase: operation.type === 'erase_begin'});
+    else if (operation.type.endsWith('_append')) strokes.get(operation.stroke_id)?.points.push(...operation.points);
+    else if (operation.type === 'remove_stroke') strokes.delete(operation.stroke_id);
+  }
+  draw(); document.getElementById('empty').hidden = strokes.size > 0;
+}
+
+function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${location.host}/ws/board?session_id=${encodeURIComponent(sessionId)}`);
+  socket.onopen = () => { document.getElementById('status').textContent = `연결됨 · ${sessionId}`; };
+  socket.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.type === 'snapshot') { snapshotSequence = message.sequence; apply(message.operations, true); return; }
+    if (message.sequence <= snapshotSequence) return;
+    snapshotSequence = message.sequence; apply(message.operations);
+  };
+  socket.onclose = () => { document.getElementById('status').textContent = '재연결 중'; setTimeout(connect, 1000); };
+}
+
+function point(event) {
+  const box = board.getBoundingClientRect();
+  return {x: Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)), y: Math.max(0, Math.min(1, (event.clientY - box.top) / box.height))};
+}
+
+function drawingParams() {
+  const size = Number(document.getElementById('size').value);
+  return tool === 'pen' ? {stroke_id: strokeId, color: '#172554', brush_size: size} : {stroke_id: strokeId, eraser_radius: size / (Math.min(board.width, board.height) * 2)};
+}
+
+function sendDraw(command, event) {
+  if (controlSocket?.readyState === WebSocket.OPEN) controlSocket.send(JSON.stringify({type: 'gesture', gesture: command, pointer: point(event), params: drawingParams()}));
+}
+
+function connectControls() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  controlSocket = new WebSocket(`${protocol}//${location.host}/ws/control?session_id=${encodeURIComponent(sessionId)}`);
+  controlSocket.onmessage = event => { const message = JSON.parse(event.data); if (message.type === 'error') document.getElementById('status').textContent = message.message; };
+  controlSocket.onclose = () => setTimeout(connectControls, 1000);
+}
+
+document.getElementById('pen').onclick = () => { tool = 'pen'; document.getElementById('pen').classList.add('selected'); document.getElementById('eraser').classList.remove('selected'); };
+document.getElementById('eraser').onclick = () => { tool = 'eraser'; document.getElementById('eraser').classList.add('selected'); document.getElementById('pen').classList.remove('selected'); };
+document.getElementById('size').oninput = event => { document.getElementById('size-value').textContent = `${event.target.value} px`; };
+board.addEventListener('pointerdown', event => { if (event.button !== 0) return; board.setPointerCapture(event.pointerId); drawing = true; strokeId = crypto.randomUUID(); sendDraw(tool === 'pen' ? 'DRAW_START' : 'ERASE_START', event); });
+board.addEventListener('pointermove', event => { if (drawing) sendDraw(tool === 'pen' ? 'DRAW_MOVE' : 'ERASE_MOVE', event); });
+board.addEventListener('pointerup', event => { if (!drawing) return; drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); });
+board.addEventListener('pointercancel', event => { if (drawing) { drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); } });
+connect();
+connectControls();
