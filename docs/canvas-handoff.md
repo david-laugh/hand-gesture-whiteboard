@@ -44,6 +44,40 @@ A Gateway → B Vision → C Gesture → D Canvas
 3. B는 confidence가 낮거나 landmark가 없을 때 `pointer`를 억지로 이전 값으로 반복 발행하지 않는다. `hand_present: false` 또는 명확한 상태를 보내고 C가 현재 stroke를 안전하게 종료한다.
 4. C는 B의 `frame_id`와 timestamp를 보존해 지연·누락을 관측한다. 과거 frame은 버리고 새 frame을 우선하는 정책을 사용한다.
 
+### Vision 샘플 기준: C가 실제로 받을 데이터
+
+`origin/feature/vision`의 `services/vision/samples/`를 확인했다. 현재 B가 C에 제공하는 실제 MediaPipe HandLandmarker 결과 형식은 아래와 같다.
+
+```json
+{
+  "type": "landmarks",
+  "session_id": "sample-session-001",
+  "frame_id": 1,
+  "ts": 1793239995759,
+  "hands": [{
+    "handedness": "Left",
+    "score": 0.9481,
+    "landmarks": [[0.3983, 0.7896, -0.0000]]
+  }],
+  "gesture": null
+}
+```
+
+1. `hands`의 각 원소에는 `handedness`, `score`, 21개 `[x, y, z]` landmark가 있다. `x/y`는 이미 normalized 좌표이므로 C는 선택한 fingertip의 `x/y`를 Canvas pointer 후보로 쓸 수 있다. `z`는 Canvas pointer에 보내지 않되, C가 gesture 판정에 사용할 수 있다.
+2. `no_hand.json`은 `hands: []`, `gesture: null`이다. C는 빈 배열을 받으면 draw를 시작하지 않고, 이미 진행 중인 stroke가 있으면 `DRAW_END` 또는 `ERASE_END`를 한 번 발행한 뒤 idle 상태가 되어야 한다.
+3. `continuous_frames.json`은 `frame_id` 100~129의 30개 메시지이며 `ts`가 33ms 간격이다. C의 filter·outlier·stroke lifecycle 회귀 테스트 입력으로 사용한다. 단, 정지 사진 crop 이동 데이터라 손 모양 변화 gesture의 완전한 검증 자료는 아니다.
+4. Vision payload의 `ts`는 Canvas `GestureMessage.timestamp_ms`에 그대로 매핑한다. Vision에는 `trace_id`가 없으므로 C가 session별 또는 frame별 고유 trace ID를 생성해 넣는다. `message_type`은 C output에서 `"gesture"`, `schema_version`은 `"1.0.0"`으로 채운다.
+5. `gesture`는 Vision 샘플에서 `null`이다. 현 단계에서는 C가 landmark를 직접 판정해 draw/erase/idle을 만들며, 이후 B가 gesture hint를 제공해도 C가 최종 Canvas 명령을 결정한다.
+
+### B payload를 C의 Canvas 입력으로 바꾸는 정확한 흐름
+
+1. C는 `{prefix}/landmarks/{session_id}`를 구독한다. 이 topic은 위 Vision 샘플을 반영한 **제안**이며 B/C 담당자가 확정해야 한다.
+2. `hands`가 비어 있거나 선택한 hand의 `score`가 threshold 미만이면 active stroke를 끝내고 해당 frame은 pointer로 발행하지 않는다.
+3. C는 21개 landmark 중 팀이 정한 pointer landmark(예: index fingertip)를 선택한다. camera preview를 mirror했다면 이 시점에만 `x = 1 - x`를 적용하고 이후에는 다시 뒤집지 않는다.
+4. C는 EMA/median filter와 outlier 검사 후 `pointer: {"x": 0..1, "y": 0..1}`를 만든다. `frame_id`는 B 값을 유지하고 `timestamp_ms`에는 `ts`를 넣는다.
+5. C는 도구 판정 결과를 `DRAW_*` 또는 `ERASE_*`로, 동일 stroke의 ID와 함께 `{prefix}/gestures/{session_id}`에 발행한다.
+6. D는 이 입력만 처리해 `CanvasMessage` operation을 `{prefix}/canvas/{session_id}`에 발행한다. D는 Vision의 `hands` payload를 직접 구독하지 않는다.
+
 ### 3. C(Gesture): B 좌표를 연속된 그림 명령으로 변환하는 계획
 
 1. C는 B 좌표를 받아 dead zone, confidence threshold, 손가락 gesture 판정으로 펜/지우개/중지를 결정한다.
