@@ -24,6 +24,8 @@ def create_app(settings=None, transport=None):
     link = transport or MqttTransport(settings)
     counters = Counter()
     sessions = set()
+    viewers = set()
+    latest_frame = None
     started = time.monotonic()
 
     @asynccontextmanager
@@ -73,6 +75,32 @@ def create_app(settings=None, transport=None):
                 "input_fps": counters["received"] / elapsed,
                 "result_fps": counters["completed"] / elapsed,
                 "drop_rate": counters["dropped"] / max(1, counters["received"])}
+
+    @app.websocket("/ws/status")
+    async def status_stream(ws: WebSocket):
+        await ws.accept()
+        viewers.add(ws)
+        try:
+            if latest_frame:
+                await ws.send_bytes(latest_frame)
+            while True:
+                await ws.receive()
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            viewers.discard(ws)
+
+    async def publish_preview(jpeg):
+        nonlocal latest_frame
+        latest_frame = jpeg
+        disconnected = []
+        for viewer in tuple(viewers):
+            try:
+                await viewer.send_bytes(jpeg)
+            except (WebSocketDisconnect, RuntimeError):
+                disconnected.append(viewer)
+        for viewer in disconnected:
+            viewers.discard(viewer)
 
     @app.websocket("/ws")
     @app.websocket("/ws/stream")
@@ -138,6 +166,7 @@ def create_app(settings=None, transport=None):
                     continue
                 previous_id = envelope["frame_id"]
                 counters["received"] += 1
+                await publish_preview(jpeg)
                 if queue.full():
                     queue.get_nowait()
                     counters["dropped"] += 1

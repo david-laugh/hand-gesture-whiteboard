@@ -1,4 +1,18 @@
 const $ = id => document.getElementById(id);
+let previousPreview;
+
+function connectPreview() {
+  const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${scheme}//${location.host}/ws/status`);
+  socket.binaryType = 'blob';
+  socket.onmessage = event => {
+    const url = URL.createObjectURL(event.data);
+    const image = $('latest-frame');
+    image.onload = () => { if (previousPreview) URL.revokeObjectURL(previousPreview); previousPreview = url; };
+    image.src = url; image.classList.add('visible'); $('preview-empty').hidden = true;
+  };
+  socket.onclose = () => setTimeout(connectPreview, 1000);
+}
 
 async function refresh() {
   try {
@@ -20,3 +34,4 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 2000);
+connectPreview();
