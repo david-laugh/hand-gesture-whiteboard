@@ -21,11 +21,14 @@ SERVICE_NAME = os.getenv("SERVICE_NAME", "gesture")
 SCHEMA_VERSION = os.getenv("SCHEMA_VERSION", "1.0.0")
 SCHEMA_MAJOR = SCHEMA_VERSION.split(".")[0]
 
-# 그리기 자세가 몇 프레임 연속이면 DRAW_START (N)
-DRAW_ENTER_FRAMES = _int("DRAW_ENTER_FRAMES", 3)
-# 그리기 자세가 아닌 프레임이 몇 번 연속이면 DRAW_END (M).
-# 실제 녹화(30fps)에서 3~4프레임짜리 튐이 획을 끊어서 5로 정함 (30fps에서 약 167ms).
-DRAW_EXIT_FRAMES = _int("DRAW_EXIT_FRAMES", 5)
+# 도구(그리기·지우개·줌) 진입/이탈 debounce. 실제 폰 입력은 5~20fps로 바뀌므로 시간(ms) 기준으로 잰다.
+# 진입: 그 자세가 STATE_ENTER_MS 이상 + 최소 DRAW_ENTER_FRAMES 프레임 → *_START
+# 이탈: 다른 자세가 STATE_EXIT_MS 이상 + 최소 DRAW_EXIT_FRAMES 프레임 → *_END
+# (예전 기준: 30fps에서 3프레임 진입 ≈ 100ms, 5프레임 이탈 ≈ 170ms)
+STATE_ENTER_MS = _int("STATE_ENTER_MS", 100)
+STATE_EXIT_MS = _int("STATE_EXIT_MS", 170)
+DRAW_ENTER_FRAMES = _int("DRAW_ENTER_FRAMES", 2)
+DRAW_EXIT_FRAMES = _int("DRAW_EXIT_FRAMES", 2)
 # 이전 프레임과 간격이 이보다 길면 세션 상태 초기화 (ms)
 SESSION_GAP_MS = _int("SESSION_GAP_MS", 500)
 # 메시지가 이만큼 없던 세션은 메모리에서 지운다 (펜 색·굵기 설정도 함께 사라짐)
@@ -41,6 +44,10 @@ FINGER_EXTENDED_RATIO = _float("FINGER_EXTENDED_RATIO", 0.15)
 ERASE_TIP_WRIST_ENTER = _float("ERASE_TIP_WRIST_ENTER", 1.20)  # 손끝 모으기(지우개) 진입
 ERASE_TIP_WRIST_EXIT = _float("ERASE_TIP_WRIST_EXIT", 1.15)  # 지우는 중 유지 (히스테리시스)
 FIST_TIP_WRIST_MAX = _float("FIST_TIP_WRIST_MAX", 1.18)  # 이보다 작아야 주먹. 그 사이는 포즈 없음
+# 손끝 퍼짐 = 다섯 손끝(4,8,12,16,20)이 그 평균점에서 떨어진 평균 거리 ÷ 손 크기.
+# 진짜 손끝 모으기 0.10~0.27(중앙값 0.12~0.14), 주먹→검지로 바뀌는 순간(잘못된 ERASE) 0.22~0.40
+ERASE_SPREAD_ENTER = _float("ERASE_SPREAD_ENTER", 0.18)
+ERASE_SPREAD_EXIT = _float("ERASE_SPREAD_EXIT", 0.28)  # 지우는 중 유지
 
 # 줌 (엄지·검지, 나머지 세 손가락 접음)
 ZOOM_PINCH_RATIO = _float("ZOOM_PINCH_RATIO", 0.20)  # 집게: dist(4,8) ÷ 손 크기가 이보다 작음 (rec01 그리기 최소 0.28)
@@ -58,11 +65,15 @@ ZOOM_SCALE_MIN = _float("ZOOM_SCALE_MIN", 0.5)
 ZOOM_SCALE_MAX = _float("ZOOM_SCALE_MAX", 3.0)
 # 배율 = 시작 배율 × 현재 거리 ÷ 시작 거리. 거리가 이보다 작으면 이 값으로 계산 (집게에서 시작할 때 너무 민감하지 않게)
 ZOOM_DIST_FLOOR = _float("ZOOM_DIST_FLOOR", 0.25)
+# 줌 중 집게(거리 < ZOOM_PINCH_RATIO)를 벌리지 않고 이만큼 유지하면 배율 1배로 복귀 (ZOOM_UPDATE 1.0 → ZOOM_END)
+ZOOM_RESET_HOLD_MS = _int("ZOOM_RESET_HOLD_MS", 1000)
+# "벌리지 않음": 유지하는 동안 엄지·검지 거리 변화가 이 값(손 크기 비율) 이내
+ZOOM_RESET_STILL = _float("ZOOM_RESET_STILL", 0.08)
 
 # 일회성 명령 (주먹=UNDO, 브이=펜 색, 손바닥=굵기): 이만큼 유지하면 1번 발행
 COMMAND_HOLD_MS = _int("COMMAND_HOLD_MS", 500)
 # 주먹(UNDO)만 더 길게: 획을 끝내며 손을 접는 동작과 구분하기 위해. 획이 끝난 시점부터 잰다.
-UNDO_HOLD_MS = _int("UNDO_HOLD_MS", 700)
+UNDO_HOLD_MS = _int("UNDO_HOLD_MS", 1000)  # 그린 뒤 손을 접고 쉴 때 실수로 UNDO가 나가지 않게 (rec01)
 # 일회성 명령 사이 최소 간격
 COMMAND_COOLDOWN_MS = _int("COMMAND_COOLDOWN_MS", 1000)
 

@@ -33,7 +33,9 @@ def test_classify_pointer_null_without_hand(client, fixture):
 
 def test_draw_sequence_over_http_with_skipped_frame_ids(client, fixture, gesture_validator):
     """frame_id가 건너뛰어도 그리기가 동작하고, 모든 응답이 schema를 통과한다."""
-    m = config.DRAW_EXIT_FRAMES
+    from tests.conftest import enter_frames_at, exit_frames_at
+
+    n, m = enter_frames_at(33), exit_frames_at(33)
     frames = ["index_pose"] * 5 + ["fist"] * m + ["no_hand"]
     bodies = []
     for i, name in enumerate(frames):
@@ -47,10 +49,10 @@ def test_draw_sequence_over_http_with_skipped_frame_ids(client, fixture, gesture
         assert body["frame_id"] == req["frame_id"]
         bodies.append(body)
 
-    assert [b["gesture"] for b in bodies] == [
-        "IDLE", "IDLE", "DRAW_START", "DRAW_MOVE", "DRAW_MOVE",
-    ] + ["DRAW_MOVE"] * (m - 1) + ["DRAW_END", "IDLE"]
-    stroke_ids = {b["params"]["stroke_id"] for b in bodies[2:2 + 3 + m]}
+    assert [b["gesture"] for b in bodies] == (
+        ["IDLE"] * (n - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (5 - n) + ["DRAW_MOVE"] * (m - 1) + ["DRAW_END", "IDLE"]
+    )
+    stroke_ids = {b["params"]["stroke_id"] for b in bodies[n - 1:5 + m]}
     assert len(stroke_ids) == 1
     assert "stroke_id" not in bodies[-1]["params"]
     assert bodies[-1]["pointer"] is None
@@ -77,18 +79,29 @@ def test_invalid_vision_format_returns_contract_error(client, fixture):
 
 
 def test_reset_clears_session_state(client, fixture):
-    for _ in range(3):
-        client.post("/v1/classify", json=fixture("index_pose"))
+    for i in range(4):
+        req = fixture("index_pose")
+        req["timestamp_ms"] += i * 33
+        client.post("/v1/classify", json=req)
     assert client.post("/v1/sessions/sess-01/reset").status_code == 204
     body = client.post("/v1/classify", json=fixture("index_pose")).json()
     assert body["gesture"] == "IDLE"
 
 
 def test_stroke_id_not_reused_after_reset(client, fixture):
+    ts = [1_793_260_800_000]
+
+    def post():
+        req = fixture("index_pose")
+        ts[0] += 33
+        req["timestamp_ms"] = ts[0]
+        return client.post("/v1/classify", json=req).json()
+
     def draw_stroke_id():
-        bodies = [client.post("/v1/classify", json=fixture("index_pose")).json() for _ in range(3)]
-        assert bodies[-1]["gesture"] == "DRAW_START"
-        return bodies[-1]["params"]["stroke_id"]
+        bodies = [post() for _ in range(4)]
+        start = [b for b in bodies if b["gesture"] == "DRAW_START"]
+        assert len(start) == 1
+        return start[0]["params"]["stroke_id"]
 
     first = draw_stroke_id()
     client.post("/v1/sessions/sess-01/reset")

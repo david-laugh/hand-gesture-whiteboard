@@ -15,8 +15,8 @@ from src.processor import GestureProcessor
 from src.state_machine import GestureStateMachine
 
 REC = Path(__file__).parent / "fixtures" / "rec01"
-OLD = dict(enter_frames=3, exit_frames=3, flip_fix=False)  # 녹화 분석 전 설정
-NEW = dict(enter_frames=3, exit_frames=5, flip_fix=True, normal_sign=1)  # 현재 기본값
+OLD = dict(enter_frames=3, exit_frames=3, enter_ms=0, exit_ms=0, flip_fix=False)  # 녹화 분석 전 설정 (프레임 기준)
+NEW = dict(flip_fix=True, normal_sign=1)  # 현재 기본값 (진입 100ms / 이탈 170ms)
 
 
 def load(name: str) -> list[dict]:

@@ -31,24 +31,34 @@ def gestures(res):
     return [r.gesture for _, r in res]
 
 
-def test_curled_pinch_then_open_zooms_in():
-    """꼭 붙인 집게 → 벌리기: 줌이 시작되고 확대된다. 그리기나 UNDO는 나오지 않는다."""
-    res = run("pinch_zoom_490_530")
-    g = gestures(res)
+def test_curled_pinch_starts_zoom_not_undo():
+    """꼭 붙인 집게(검지가 말려 비율 < 0)가 주먹이 아니라 줌으로 시작된다. 그리기나 UNDO는 나오지 않는다.
+    (이 구간은 끝에 손 전체를 펴서 손바닥이 되므로 확대 장면으로는 쓰지 않는다.)"""
+    g = gestures(run("pinch_zoom_490_530"))
     assert g.count("ZOOM_START") == 1
     assert "DRAW_START" not in g and "UNDO" not in g
-    scales = [r.params["zoom_scale"] for _, r in res if r.gesture in ("ZOOM_UPDATE", "ZOOM_END")]
-    assert max(scales) >= 2.0
 
 
-def test_zoom_is_not_broken_while_pinch_is_held():
-    """집게를 유지하는 동안(검지 비율이 0 아래로 내려가도) 줌이 끊기지 않고, UNDO가 나가지 않는다."""
-    res = run("pinch_zoom_1110_1235")
+def test_pinch_held_still_resets_zoom_to_1x_once():
+    """집게를 벌리지 않고 1초 유지하면 ZOOM_UPDATE(1.0) → ZOOM_END. 집게를 계속 쥐고 있어도 줌이 다시 시작되지 않고 UNDO도 없다."""
+    res = run("pinch_zoom_1110_1235", zoom_reset_hold_ms=1000)
+    g = gestures(res)
+    assert g.count("ZOOM_START") == 1 and g.count("ZOOM_END") == 1
+    i_end = g.index("ZOOM_END")
+    assert res[i_end - 1][1].gesture == "ZOOM_UPDATE" and res[i_end - 1][1].params["zoom_scale"] == 1.0
+    assert res[i_end][1].params["zoom_scale"] == 1.0
+    start_f, end_f = res[g.index("ZOOM_START")][0], res[i_end][0]
+    assert 12 <= end_f - start_f <= 25  # 약 15fps에서 1초 남짓
+    assert "UNDO" not in g[g.index("ZOOM_START"):]
+
+
+def test_zoom_kept_while_pinch_held_without_reset():
+    """1배 복귀를 끄면, 집게를 유지하는 동안(검지 비율이 0 아래로 내려가도) 줌이 끊기지 않는다."""
+    res = run("pinch_zoom_1110_1235", zoom_reset_hold_ms=10**9)
     zoom = [f for f, r in res if r.gesture.startswith("ZOOM")]
     assert gestures(res).count("ZOOM_START") == 1
     assert zoom[-1] - zoom[0] >= 80
-    start, end = zoom[0], zoom[-1]
-    assert not any(r.gesture == "UNDO" for f, r in res if start <= f <= end)
+    assert not any(r.gesture == "UNDO" for f, r in res if zoom[0] <= f <= zoom[-1])
 
 
 def test_without_tight_pinch_rule_it_was_read_as_fist():
