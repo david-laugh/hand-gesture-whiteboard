@@ -47,8 +47,9 @@ function setPenColor(value) {
   return true;
 }
 
-// Strokes are kept in fixed canvas coordinates on an offscreen page; the visible board shows that
-// page through the zoom view (screen = canvas * scale + offset) sent by the server as set_view.
+// Strokes are kept in fixed canvas coordinates and drawn through the zoom view (screen = canvas *
+// scale + offset, sent by the server as set_view) onto a transparent layer, so lines stay sharp when
+// zoomed and the eraser (destination-out) only clears ink. The layer is then put on the white page.
 const page = document.createElement('canvas');
 page.width = board.width; page.height = board.height;
 const pageContext = page.getContext('2d');
@@ -63,7 +64,9 @@ function setView(next) {
 }
 
 function draw() {
+  pageContext.setTransform(1, 0, 0, 1, 0, 0);
   pageContext.clearRect(0, 0, page.width, page.height);
+  pageContext.setTransform(view.scale, 0, 0, view.scale, view.offset.x, view.offset.y);
   pageContext.lineCap = pageContext.lineJoin = 'round';
   for (const stroke of strokes.values()) {
     if (!stroke.points.length) continue;
@@ -82,8 +85,8 @@ function draw() {
   context.setTransform(view.scale, 0, 0, view.scale, view.offset.x, view.offset.y);
   context.fillStyle = '#ffffff';
   context.fillRect(0, 0, page.width, page.height);
-  context.drawImage(page, 0, 0);
   context.setTransform(1, 0, 0, 1, 0, 0);
+  context.drawImage(page, 0, 0);
 }
 
 function apply(operations, reset = false) {

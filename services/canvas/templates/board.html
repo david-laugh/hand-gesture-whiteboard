@@ -9,6 +9,7 @@
 </head>
 <body>
   <header><h1>실시간 그림판</h1><p><span id="status">연결 중</span> <span id="zoom" class="zoom-badge" hidden></span> <a id="saved" hidden target="_blank" rel="noopener"></a> <a href="/gallery" target="_blank" rel="noopener">저장된 그림</a></p></header>
+  <div class="toolbar">
   <section class="tools" aria-label="그리기 도구">
     <button id="pen" class="selected" type="button">펜</button><button id="eraser" type="button">지우개</button>
     <label>펜 굵기 <input id="pen-size" type="range" min="2" max="60" value="8"><output id="pen-size-value">8 px</output></label>
@@ -30,6 +31,17 @@
       <small id="color-help">예: #172554 · Enter 또는 입력창 밖으로 이동하면 적용</small>
     </fieldset>
   </section>
+  <aside class="gesture-guide" aria-label="제스처 안내">
+    <table>
+      <caption>제스처 안내 <small>오른손 손등을 카메라에 보여 주세요</small></caption>
+      <tbody>
+        <tr><th scope="row">☝️ 검지만 펴기</th><td>펜으로 그리기</td><th scope="row">🤌 다섯 손끝 모으기</th><td>지우개</td></tr>
+        <tr><th scope="row">🤏 엄지·검지 집게/L자</th><td>벌리면 확대, 모으면 축소</td><th scope="row">✊ 주먹 <small>0.7초</small></th><td>되돌리기</td></tr>
+        <tr><th scope="row">✌️ 브이 <small>0.5초</small></th><td>다음 펜 색</td><th scope="row">🖐️ 손바닥 <small>0.5초</small></th><td>굵기 바꾸기</td></tr>
+      </tbody>
+    </table>
+  </aside>
+  </div>
   <main><canvas id="board" width="1280" height="720"></canvas><canvas id="skeleton" width="1280" height="720" aria-hidden="true"></canvas><div id="cursor" aria-hidden="true"></div></main>
 </body>
 </html>
