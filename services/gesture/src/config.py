@@ -48,6 +48,12 @@ ZOOM_PINCH_RATIO = _float("ZOOM_PINCH_RATIO", 0.20)  # 집게: dist(4,8) ÷ 손 
 ZOOM_L_ENTER = _float("ZOOM_L_ENTER", 1.45)
 ZOOM_L_EXIT = _float("ZOOM_L_EXIT", 1.30)  # L자가 이어지는 중에는 이 값까지 L자로 봄
 ZOOM_INDEX_MIN_RATIO = _float("ZOOM_INDEX_MIN_RATIO", 0.0)  # 검지가 이보다 접히면 줌 아님 (주먹 구분)
+# 검지를 둥글게 말아 엄지에 꼭 붙인 집게 (녹화 rec04: 거리 중앙값 0.05, 검지 중앙값 −0.12).
+# 진짜 주먹은 거리 0.12 이상·검지 −0.20 이하라서 겹치지 않는다.
+ZOOM_PINCH_TIGHT = _float("ZOOM_PINCH_TIGHT", 0.10)
+ZOOM_TIGHT_INDEX_MIN = _float("ZOOM_TIGHT_INDEX_MIN", -0.20)
+# 줌 중에는 세 손가락이 접혀 있고 (검지 > 이 값 또는 꼭 붙인 집게)이면 엄지·검지 거리와 상관없이 계속 줌
+ZOOM_KEEP_INDEX_MIN = _float("ZOOM_KEEP_INDEX_MIN", -0.20)
 ZOOM_SCALE_MIN = _float("ZOOM_SCALE_MIN", 0.5)
 ZOOM_SCALE_MAX = _float("ZOOM_SCALE_MAX", 3.0)
 # 배율 = 시작 배율 × 현재 거리 ÷ 시작 거리. 거리가 이보다 작으면 이 값으로 계산 (집게에서 시작할 때 너무 민감하지 않게)

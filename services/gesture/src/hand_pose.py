@@ -132,6 +132,9 @@ class Thresholds:
     zoom_l_enter: float = config.ZOOM_L_ENTER
     zoom_l_exit: float = config.ZOOM_L_EXIT
     zoom_index_min: float = config.ZOOM_INDEX_MIN_RATIO
+    zoom_pinch_tight: float = config.ZOOM_PINCH_TIGHT
+    zoom_tight_index_min: float = config.ZOOM_TIGHT_INDEX_MIN
+    zoom_keep_index_min: float = config.ZOOM_KEEP_INDEX_MIN
 
 
 @dataclass
@@ -146,11 +149,20 @@ def _three_folded(landmarks: Sequence[Point], th: Thresholds) -> bool:
     return not any(finger_extended(landmarks, f, th.ratio) for f in (MIDDLE, RING, PINKY))
 
 
+def _is_pinch_zoom(landmarks: Sequence[Point], th: Thresholds) -> bool:
+    """집게 줌: (검지가 덜 접혀 있고 엄지가 붙음) 또는 (검지를 말아 엄지에 꼭 붙임). 주먹은 둘 다 아니다."""
+    pinch, index = pinch_ratio(landmarks), finger_ratio(landmarks, INDEX)
+    return ((index > th.zoom_index_min and pinch < th.zoom_pinch)
+            or (index > th.zoom_tight_index_min and pinch < th.zoom_pinch_tight))
+
+
 def _detect(landmarks: Sequence[Point], th: Thresholds, erasing: bool, zooming: bool, zoom_cand: bool) -> Detection:
     tip = landmarks[INDEX_TIP]
     zoom = Detection(ZOOM, thumb_index_mid(landmarks), False, pinch_ratio(landmarks))
-    # 줌 중에는 엄지 위치와 상관없이, 세 손가락이 접혀 있고 검지가 접히지 않았으면 계속 줌 (집게 ↔ L자 사이 포함)
-    if zooming and _three_folded(landmarks, th) and finger_ratio(landmarks, INDEX) > th.zoom_index_min:
+    # 줌 중에는 엄지·검지 거리와 상관없이, 세 손가락이 접혀 있고 검지가 깊게 접히지 않았으면(또는 꼭 붙인 집게면)
+    # 계속 줌. 집게에서 벌리는 중간에 검지가 펴져 "그리기"처럼 보여도 줌이 끊기지 않는다.
+    if zooming and _three_folded(landmarks, th) and (
+            finger_ratio(landmarks, INDEX) > th.zoom_keep_index_min or _is_pinch_zoom(landmarks, th)):
         return zoom
 
     pattern = finger_pose(landmarks, th.ratio)
@@ -158,8 +170,7 @@ def _detect(landmarks: Sequence[Point], th: Thresholds, erasing: bool, zooming: 
         tw = tip_wrist(landmarks)
         if tw > (th.erase_exit if erasing else th.erase_enter):
             return Detection(ERASE, _mean(landmarks, ALL_TIPS), False)
-        # 집게 줌: 검지가 덜 접혀 있고 엄지 끝이 검지 끝에 붙음 (주먹은 검지가 깊게 접혀 있어 제외)
-        if finger_ratio(landmarks, INDEX) > th.zoom_index_min and pinch_ratio(landmarks) < th.zoom_pinch:
+        if _is_pinch_zoom(landmarks, th):
             return zoom
         return Detection(FIST if tw < th.fist_max else NONE, tip, False)
     if pattern == DRAW:

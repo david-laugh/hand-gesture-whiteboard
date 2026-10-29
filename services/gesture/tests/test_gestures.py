@@ -47,8 +47,9 @@ def bunch(tw: float):
         lms[mcp + 1] = P(x, wy - hs * (tw + 0.15))  # PIP: 손끝보다 손목에서 멀다 → 접힘
         lms[mcp + 2] = P(x, wy - hs * (tw + 0.10))
     tip = P(wx, wy - hs * tw)
-    for t in (8, 12, 16, 20, 4):
+    for t in (8, 12, 16, 20):
         lms[t] = P(tip.x, tip.y)
+    lms[4] = P(tip.x - 0.33 * hs, tip.y)  # 엄지 끝은 손끝 근처 (rec03 손끝 모으기의 엄지–검지 거리 중앙값 0.33)
     lms[1], lms[2], lms[3] = P(0.42, 0.85), P(0.40, 0.80), P(0.45, 0.75)
     return lms
 
