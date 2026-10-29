@@ -150,7 +150,7 @@ Gateway는 폰에서 **촬영 시작**을 누를 때마다 새 `session_id`를 �
 1. 처음 보는 `session_id`의 landmarks가 오면 **촬영 시작**입니다. 자동 모드 그림판은 그 세션의 빈 캔버스로 바뀌고, 이전 세션 그림은 저장됩니다.
 2. landmarks가 `CANVAS_SESSION_IDLE_SEC`(기본 5초) 동안 끊기면 **촬영 종료**입니다. 그 세션 그림을 저장하고 화면에는 그대로 남겨 둡니다.
 3. 파일 이름은 `YYYYMMDD-HHMMSS_<세션 앞 8자리>.png`(세션 시작 시각)입니다. 같은 세션을 다시 저장하면 같은 파일을 덮어쓰고, 빈 그림은 저장하지 않습니다. 시각은 container 시간대를 따르므로 Docker 기본값(UTC)이면 한국 시간보다 9시간 이릅니다.
-4. 그림판 상단의 `저장 폴더` 링크(`/v1/drawings`)에서 목록을, `저장됨: …` 링크에서 방금 저장한 PNG를 열 수 있습니다.
+4. 그림판 상단의 `저장된 그림` 링크(`http://localhost:8003/gallery`)를 열면 저장된 그림이 썸네일과 함께 최신순으로 위에서 아래로 나열됩니다. 지금 촬영 중인 세션은 맨 위에 `촬영 중` 카드로 실시간 그림을 보여 주고, 저장된 카드마다 `크게 보기`와 `다운로드` 버튼이 있습니다. 갤러리는 3초마다 자동으로 새로고침됩니다. `저장됨: …` 링크는 방금 저장한 PNG를 바로 엽니다.
 5. 마우스 UI(`/ws/control`)로 그린 명령은 촬영 세션으로 취급하지 않으므로 자동 모드 화면을 바꾸지 않습니다.
 
 주의: 폰 화면(`services/gateway/static/app.js`)은 연결이 끊기면 자동 재연결하고, Gateway는 연결마다 새 세션 ID를 만듭니다. 촬영 중 네트워크가 끊기면 그림이 두 세션(두 파일)으로 나뉠 수 있습니다.
@@ -185,7 +185,8 @@ Canvas는 0~1 좌표를 고정 `1280×720`(16:9)에 그대로 펼칩니다. 폰�
 | `POST` | `/v1/apply` | `GestureMessage` JSON을 직접 적용하고 `CanvasMessage` 반환 |
 | `GET` | `/v1/sessions/{session_id}/export.png` | 현재 session의 PNG export |
 | `POST` | `/v1/sessions/{session_id}/save` | 현재 session 그림을 저장 폴더에 즉시 저장 |
-| `GET` | `/v1/drawings` | 저장 폴더의 PNG 목록(최신순) |
+| `GET` | `/gallery` | 저장된 그림 갤러리(세로 목록) |
+| `GET` | `/v1/drawings` | 저장 폴더의 PNG 목록(최신순)과 촬영 중 세션 정보 |
 | `GET` | `/drawings/{file}` | 저장된 PNG 파일 |
 
 ## 환경 변수

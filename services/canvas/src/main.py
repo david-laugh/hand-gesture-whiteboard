@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .engine import CanvasEngine
-from .sessions import SessionTracker, normalise_hands, render_png, save_drawing
+from .sessions import SessionTracker, has_visible_strokes, normalise_hands, render_png, save_drawing
 
 ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger("canvas")
@@ -251,11 +251,26 @@ def create_app(settings=None):
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @app.get("/gallery")
+    async def gallery():
+        return FileResponse(ROOT / "templates" / "gallery.html")
+
     @app.get("/v1/drawings")
     async def drawings():
-        files = sorted((path for path in settings.save_dir.glob("*.png") if not path.name.startswith(".")),
-                       key=lambda path: path.name, reverse=True)
-        return {"directory": str(settings.save_dir), "files": [{"file": path.name, "url": f"/drawings/{path.name}"} for path in files]}
+        files = []
+        for path in settings.save_dir.glob("*.png"):
+            if path.name.startswith("."):
+                continue
+            stat = path.stat()
+            files.append({"file": path.name, "url": f"/drawings/{path.name}?v={stat.st_mtime_ns}",
+                          "session": path.stem.split("_", 1)[-1], "saved_ms": stat.st_mtime_ns // 1_000_000})
+        files.sort(key=lambda item: item["file"], reverse=True)
+        live = tracker.live
+        with engine_lock:
+            live_has_drawing = bool(live) and has_visible_strokes(engine, live)
+        return {"directory": str(settings.save_dir), "files": files,
+                "live": {"session_id": live, "active": bool(live) and tracker.active(live),
+                         "has_drawing": live_has_drawing, "saved_file": saved_files.get(live)}}
 
     @app.post("/v1/sessions/{session_id}/save")
     async def save_now(session_id: str):
