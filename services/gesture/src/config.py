@@ -36,11 +36,22 @@ LAG_WARN_MS = _int("LAG_WARN_MS", 200)
 # 손가락 "펴짐" 기준: (손목~손끝 − 손목~둘째 마디) ÷ 손 크기 > 이 값
 FINGER_EXTENDED_RATIO = _float("FINGER_EXTENDED_RATIO", 0.15)
 
-# 집게(엄지 끝 4 ↔ 검지 끝 8) = 지우개. dist(4,8) ÷ 손 크기. 진입/이탈 값을 달리해 경계에서 떨리지 않게 한다.
-PINCH_ENTER_RATIO = _float("PINCH_ENTER_RATIO", 0.30)
-PINCH_EXIT_RATIO = _float("PINCH_EXIT_RATIO", 0.45)
-# 주먹은 엄지가 검지 옆에 붙어 집게처럼 보일 수 있다. 검지가 이 값보다 깊게 접혀 있으면 집게로 보지 않는다.
-PINCH_INDEX_MIN_RATIO = _float("PINCH_INDEX_MIN_RATIO", -0.15)
+# tip_wrist = 네 손끝(8,12,16,20) 평균 ~ 손목 거리 ÷ 손 크기. 네 손가락이 "접힘"으로 보일 때만 쓴다.
+# 녹화 rec03: 주먹 0.78~1.16, 다섯 손끝 모으기 1.21~1.60
+ERASE_TIP_WRIST_ENTER = _float("ERASE_TIP_WRIST_ENTER", 1.20)  # 손끝 모으기(지우개) 진입
+ERASE_TIP_WRIST_EXIT = _float("ERASE_TIP_WRIST_EXIT", 1.15)  # 지우는 중 유지 (히스테리시스)
+FIST_TIP_WRIST_MAX = _float("FIST_TIP_WRIST_MAX", 1.18)  # 이보다 작아야 주먹. 그 사이는 포즈 없음
+
+# 줌 (엄지·검지, 나머지 세 손가락 접음)
+ZOOM_PINCH_RATIO = _float("ZOOM_PINCH_RATIO", 0.20)  # 집게: dist(4,8) ÷ 손 크기가 이보다 작음 (rec01 그리기 최소 0.28)
+# L자: 엄지 끝 ~ 검지 시작 마디(5) ÷ 손 크기. rec01 그리기 중 최대 1.37이라 그보다 높게.
+ZOOM_L_ENTER = _float("ZOOM_L_ENTER", 1.45)
+ZOOM_L_EXIT = _float("ZOOM_L_EXIT", 1.30)  # L자가 이어지는 중에는 이 값까지 L자로 봄
+ZOOM_INDEX_MIN_RATIO = _float("ZOOM_INDEX_MIN_RATIO", 0.0)  # 검지가 이보다 접히면 줌 아님 (주먹 구분)
+ZOOM_SCALE_MIN = _float("ZOOM_SCALE_MIN", 0.5)
+ZOOM_SCALE_MAX = _float("ZOOM_SCALE_MAX", 3.0)
+# 배율 = 시작 배율 × 현재 거리 ÷ 시작 거리. 거리가 이보다 작으면 이 값으로 계산 (집게에서 시작할 때 너무 민감하지 않게)
+ZOOM_DIST_FLOOR = _float("ZOOM_DIST_FLOOR", 0.25)
 
 # 일회성 명령 (주먹=UNDO, 브이=펜 색, 손바닥=굵기): 이만큼 유지하면 1번 발행
 COMMAND_HOLD_MS = _int("COMMAND_HOLD_MS", 500)
