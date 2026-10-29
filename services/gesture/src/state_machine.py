@@ -1,21 +1,34 @@
 """세션 하나의 제스처 상태 머신 (순수 Python, FastAPI와 무관).
 
-상태는 IDLE ↔ DRAWING 두 개뿐이다.
-나중에 ERASING / ZOOMING을 추가할 때는 상태와 포즈 판별만 늘리면 된다.
+상태: IDLE, DRAWING, ERASING (DRAWING과 ERASING은 동시에 될 수 없다)
+- 검지만 N프레임 → DRAW_START … 아닌 프레임이 M프레임 → DRAW_END
+- 집게 N프레임   → ERASE_START … 아닌 프레임이 M프레임 → ERASE_END
+- 도구를 바꾸면 이전 도구의 *_END가 먼저 나가고, 그다음 새 도구의 *_START가 나간다.
+
+일회성 명령 (IDLE에서만): 자세를 COMMAND_HOLD_MS 유지하면 1번 발행
+- 주먹 → UNDO
+- 브이 → 다음 펜 색 (이후 DRAW_START의 params.color)
+- 손바닥 → 마지막으로 쓴 도구의 굵기 순환 (펜 brush_size / 지우개 eraser_radius)
+같은 자세를 계속 유지하면 다시 나가지 않는다 (자세를 바꿔야 재발행). 명령 사이에는 쿨다운이 있다.
+획을 끝낸 순간의 자세도 잠가 둔다 → 그리다가 주먹을 쥐어도 UNDO가 나가지 않는다.
 """
 import itertools
 import secrets
 import string
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Sequence
 
 from . import config
-from .hand_pose import Point, classify_draw
+from .hand_pose import DRAW, ERASE, FIST, NONE, PALM, V, Point, detect_pose
 from .one_euro import PointFilter
 
 IDLE = "IDLE"
 DRAWING = "DRAWING"
+ERASING = "ERASING"
+_TOOL_STATE = {DRAW: DRAWING, ERASE: ERASING}
+_STATE_PREFIX = {DRAWING: "DRAW", ERASING: "ERASE"}
+_COMMANDS = {FIST: "UNDO", V: "COLOR", PALM: "SIZE"}
 
 # 프로세스가 시작될 때 한 번 만드는 짧은 고유값. 재시작(--reload) 후에도 stroke_id가 겹치지 않게 한다.
 RUN_ID = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(5))
@@ -33,15 +46,20 @@ def new_stroke_id() -> str:
 
 @dataclass
 class StepResult:
-    gesture: str  # IDLE / DRAW_START / DRAW_MOVE / DRAW_END
+    gesture: str  # IDLE / DRAW_* / ERASE_* / UNDO
     pointer: tuple[float, float] | None  # 0~1 로 자른 좌표
     stroke_id: str | None
     state_frames: int  # 현재 상태를 몇 프레임째 유지 중인지
-    flip_fixed: bool = False  # 손가락 번호 뒤집힘 보정으로 그리기 자세가 된 프레임
+    flip_fixed: bool = False  # 손가락 번호 뒤집힘 보정으로 나온 포즈
+    params: dict = field(default_factory=dict)  # color / brush_size / eraser_radius
 
 
 def _clamp01(v: float) -> float:
     return min(1.0, max(0.0, v))
+
+
+def _start_index(sizes: list[float], default: float) -> int:
+    return min(range(len(sizes)), key=lambda i: abs(sizes[i] - default))
 
 
 class GestureStateMachine:
@@ -56,6 +74,16 @@ class GestureStateMachine:
         d_cutoff: float = config.ONE_EURO_D_CUTOFF,
         flip_fix: bool = config.FLIP_FIX_ENABLED,
         normal_sign: int = config.FLIP_NORMAL_SIGN,
+        pinch_enter: float = config.PINCH_ENTER_RATIO,
+        pinch_exit: float = config.PINCH_EXIT_RATIO,
+        hold_ms: int = config.COMMAND_HOLD_MS,
+        cooldown_ms: int = config.COMMAND_COOLDOWN_MS,
+        colors: list[str] = config.PEN_COLORS,
+        brush_sizes: list[float] = config.BRUSH_SIZES_PX,
+        brush_default: float = config.BRUSH_DEFAULT_PX,
+        eraser_sizes: list[float] = config.ERASER_SIZES_PX,
+        eraser_default: float = config.ERASER_DEFAULT_PX,
+        canvas_min_side: float = config.CANVAS_MIN_SIDE_PX,
     ):
         self.enter_frames = enter_frames
         self.exit_frames = exit_frames
@@ -63,16 +91,53 @@ class GestureStateMachine:
         self.finger_ratio = finger_ratio
         self.flip_fix = flip_fix
         self.normal_sign = normal_sign
+        self.pinch_enter, self.pinch_exit = pinch_enter, pinch_exit
+        self.hold_ms, self.cooldown_ms = hold_ms, cooldown_ms
+        self.colors = colors
+        self.brush_sizes, self.eraser_sizes = brush_sizes, eraser_sizes
+        self.canvas_min_side = canvas_min_side
         self._filter = PointFilter(min_cutoff, beta, d_cutoff)
         self._last_ts: int | None = None
         self._last_recv_ms: int | None = None
+        self._clock_ms = 0  # 프레임 간격을 더해 만든 세션 내부 시각 (유지 시간·쿨다운용)
+        # 도구 설정: 세션이 살아 있는 동안 유지 (gap으로 초기화해도 그대로)
+        self._color_i = 0
+        self._brush_i = _start_index(brush_sizes, brush_default)
+        self._eraser_i = _start_index(eraser_sizes, eraser_default)
+        self.last_tool = DRAW
+        self._last_command_ms: float = float("-inf")
         self._reset_state()
+
+    # --- 도구 설정 ---------------------------------------------------------------
+
+    @property
+    def color(self) -> str:
+        return self.colors[self._color_i]
+
+    @property
+    def brush_size(self) -> float:
+        return self.brush_sizes[self._brush_i]
+
+    @property
+    def eraser_radius(self) -> float:
+        """canvas 계약: 정규화 반지름. canvas는 이 값 × min(가로, 세로) × 2 를 지우개 지름(px)으로 쓴다."""
+        return round(self.eraser_sizes[self._eraser_i] / (2 * self.canvas_min_side), 5)
+
+    def _tool_params(self, tool: str) -> dict:
+        if tool == DRAW:
+            return {"color": self.color, "brush_size": self.brush_size}
+        return {"eraser_radius": self.eraser_radius}
+
+    # --- 상태 ---------------------------------------------------------------------
 
     def _reset_state(self) -> None:
         self.state = IDLE
         self.state_frames = 0
-        self._enter_count = 0  # IDLE에서 그리기 자세 연속 프레임 수
-        self._exit_count = 0  # DRAWING에서 그리기 자세 아닌 연속 프레임 수
+        self._exit_count = 0  # 그리는/지우는 중에 그 도구 자세가 아닌 연속 프레임 수
+        self._cand = NONE  # 지금 연속으로 보이는 자세와 그 프레임 수·시작 시각
+        self._cand_frames = 0
+        self._cand_start_ms = self._clock_ms
+        self._latched: str | None = None  # 이 자세로는 명령을 다시 내지 않음 (자세가 바뀌면 풀림)
         self.stroke_id: str | None = None
         self.last_draw_pointer: tuple[float, float] | None = None
         self._filter.reset()
@@ -89,40 +154,45 @@ class GestureStateMachine:
         return dt
 
     def force_end(self) -> StepResult | None:
-        """그리는 중이면 지금 획을 닫는다 (DRAW_END). 그리는 중이 아니면 None."""
-        if self.state != DRAWING:
+        """그리는/지우는 중이면 지금 획을 닫는다 (*_END). 아니면 None."""
+        if self.state == IDLE:
             return None
-        result = StepResult("DRAW_END", self.last_draw_pointer, self.stroke_id, self.state_frames)
+        gesture = f"{_STATE_PREFIX[self.state]}_END"
+        result = StepResult(gesture, self.last_draw_pointer, self.stroke_id, self.state_frames)
         self._reset_state()
         return result
 
-    def step(
-        self,
-        landmarks: Sequence[Point] | None,
-        ts_ms: int,
-        recv_ms: int,
-    ) -> StepResult:
+    def step(self, landmarks: Sequence[Point] | None, ts_ms: int, recv_ms: int) -> StepResult:
         """프레임 하나 처리. landmarks: 손 하나의 21개 점, 손이 없으면 None."""
         dt_ms = self._dt_ms(ts_ms, recv_ms)
+        self._clock_ms += dt_ms or 0
 
         if dt_ms is not None and dt_ms > self.session_gap_ms:
-            # 오래 끊겼다가 다시 왔다: 상태 초기화. 그리던 획이 있으면 먼저 닫는다.
+            # 오래 끊겼다가 다시 왔다: 상태 초기화. 진행 중인 획이 있으면 먼저 닫는다.
             ended = self.force_end()
             self._reset_state()
             if ended is not None:
                 return ended
 
         dt_s = (dt_ms or 0) / 1000.0
-        pose, raw, flip_fixed = False, None, False
+        pose, raw, flip_fixed = NONE, None, False
         if landmarks is not None:
-            # 뒤집힘 보정으로 그리기 자세가 되면 tip은 실제 검지 끝(원래 20번)이다
-            pose, tip, flip_fixed = classify_draw(landmarks, self.finger_ratio, self.flip_fix, self.normal_sign)
-            raw = (tip.x, tip.y)
+            # 지우는 중이면 집게 판정에 이탈값을 쓴다 (히스테리시스)
+            pinch = self.pinch_exit if self.state == ERASING else self.pinch_enter
+            det = detect_pose(landmarks, pinch, self.finger_ratio, self.flip_fix, self.normal_sign)
+            pose, raw, flip_fixed = det.pose, (det.point.x, det.point.y), det.flip_fixed
+
+        if pose == self._cand:
+            self._cand_frames += 1
+        else:
+            self._cand, self._cand_frames, self._cand_start_ms = pose, 1, self._clock_ms
+        if self._latched is not None and pose != self._latched:
+            self._latched = None
 
         if self.state == IDLE:
             result = self._step_idle(pose, raw, dt_s)
         else:
-            result = self._step_drawing(pose, raw, dt_s)
+            result = self._step_active(pose, raw, dt_s)
         result.flip_fixed = flip_fixed
         return result
 
@@ -130,34 +200,65 @@ class GestureStateMachine:
         x, y = self._filter(raw[0], raw[1], dt_s)
         return _clamp01(x), _clamp01(y)
 
-    def _step_idle(self, pose: bool, raw, dt_s: float) -> StepResult:
-        self._enter_count = self._enter_count + 1 if pose else 0
-
-        if self._enter_count >= self.enter_frames:
-            self.state = DRAWING
+    def _step_idle(self, pose: str, raw, dt_s: float) -> StepResult:
+        if pose in _TOOL_STATE and self._cand_frames >= self.enter_frames:
+            self.state = _TOOL_STATE[pose]
             self.state_frames = 1
             self._exit_count = 0
+            self.last_tool = pose
             self.stroke_id = new_stroke_id()
             self._filter.reset()  # 새 획은 필터를 새로 시작
             self.last_draw_pointer = self._filtered(raw, dt_s)
-            return StepResult("DRAW_START", self.last_draw_pointer, self.stroke_id, self.state_frames)
+            return StepResult(f"{_STATE_PREFIX[self.state]}_START", self.last_draw_pointer, self.stroke_id,
+                              self.state_frames, params=self._tool_params(pose))
 
         self.state_frames += 1
+        command = self._maybe_command(pose)
+        if command is not None:
+            return command
         if raw is None:
             self._filter.reset()
             return StepResult(IDLE, None, None, self.state_frames)
         return StepResult(IDLE, self._filtered(raw, dt_s), None, self.state_frames)
 
-    def _step_drawing(self, pose: bool, raw, dt_s: float) -> StepResult:
-        self.state_frames += 1
+    def _maybe_command(self, pose: str) -> StepResult | None:
+        """일회성 명령: 유지 시간을 채웠고, 잠겨 있지 않고, 쿨다운이 지났으면 1번 발행."""
+        kind = _COMMANDS.get(pose)
+        if (kind is None or self._latched == pose
+                or self._clock_ms - self._cand_start_ms < self.hold_ms
+                or self._clock_ms - self._last_command_ms < self.cooldown_ms):
+            return None
+        self._latched = pose
+        self._last_command_ms = self._clock_ms
+        if kind == "UNDO":
+            return StepResult("UNDO", None, None, self.state_frames)
+        if kind == "COLOR":
+            self._color_i = (self._color_i + 1) % len(self.colors)
+            return StepResult(IDLE, None, None, self.state_frames, params={"color": self.color})
+        # SIZE: 마지막으로 쓴 도구의 굵기
+        if self.last_tool == ERASE:
+            self._eraser_i = (self._eraser_i + 1) % len(self.eraser_sizes)
+        else:
+            self._brush_i = (self._brush_i + 1) % len(self.brush_sizes)
+        return StepResult(IDLE, None, None, self.state_frames, params=self._tool_params(self.last_tool))
 
-        if pose:
+    def _step_active(self, pose: str, raw, dt_s: float) -> StepResult:
+        self.state_frames += 1
+        tool = DRAW if self.state == DRAWING else ERASE
+        prefix = _STATE_PREFIX[self.state]
+
+        if pose == tool:
             self._exit_count = 0
             self.last_draw_pointer = self._filtered(raw, dt_s)
-            return StepResult("DRAW_MOVE", self.last_draw_pointer, self.stroke_id, self.state_frames)
+            return StepResult(f"{prefix}_MOVE", self.last_draw_pointer, self.stroke_id, self.state_frames)
 
         self._exit_count += 1
         if self._exit_count >= self.exit_frames:
-            return self.force_end()
-        # 이탈 대기 중: 손가락을 접는 중이라 검지 끝이 휘어 있다. 꼬리가 생기지 않게 마지막 그리기 좌표로 고정.
-        return StepResult("DRAW_MOVE", self.last_draw_pointer, self.stroke_id, self.state_frames)
+            # 획을 끝낸 순간의 자세는 잠근다: 그리다가 주먹을 쥔 채로 있어도 UNDO가 나가지 않게
+            latched, cand = pose, (self._cand, self._cand_frames, self._cand_start_ms)
+            ended = self.force_end()
+            self._cand, self._cand_frames, self._cand_start_ms = cand  # 다음 도구로 바로 넘어갈 수 있게 유지
+            self._latched = latched if latched in _COMMANDS else None
+            return ended
+        # 이탈 대기 중: 손가락을 접는 중이라 끝점이 휘어 있다. 꼬리가 생기지 않게 마지막 좌표로 고정.
+        return StepResult(f"{prefix}_MOVE", self.last_draw_pointer, self.stroke_id, self.state_frames)

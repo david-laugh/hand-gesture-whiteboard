@@ -5,6 +5,7 @@ from pathlib import Path
 
 # 테스트는 실제 브로커 없이 돈다. src를 import하기 전에 설정해야 한다.
 os.environ["MQTT_ENABLED"] = "false"
+os.environ["WS_INPUT_ENABLED"] = "true"  # 기본은 꺼짐. WS 입력 테스트를 위해 켠다.
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

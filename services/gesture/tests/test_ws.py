@@ -118,6 +118,20 @@ def test_ws_two_sessions_on_one_connection(fake_bridge):
     assert ends == [("hgw/v1/gestures/a", "a")]
 
 
+def test_ws_input_is_disabled_by_default():
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    env = {k: v for k, v in os.environ.items() if k != "WS_INPUT_ENABLED"}
+    out = subprocess.run(
+        [sys.executable, "-c", "from src import config; print(config.WS_INPUT_ENABLED)"],
+        cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True, text=True, check=True,
+    )
+    assert out.stdout.strip() == "False"
+
+
 def test_ws_without_mqtt_only_logs(caplog):
     """MQTT가 꺼져 있으면(테스트 기본) 발행 대신 로그만 남긴다."""
     with TestClient(app) as client:
