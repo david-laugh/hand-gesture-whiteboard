@@ -28,7 +28,7 @@ class Session:
 
 
 class CanvasEngine:
-    def __init__(self, width=1280, height=720, smoothing=0.55, segment_px=8):
+    def __init__(self, width=1280, height=720, smoothing=1.0, segment_px=8):
         self.width, self.height = width, height
         self.smoothing = smoothing
         self.segment_px = segment_px

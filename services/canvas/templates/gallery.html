@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>저장된 그림</title>
+  <link rel="stylesheet" href="/static/board.css">
+  <link rel="stylesheet" href="/static/gallery.css">
+  <script type="module" src="/static/gallery.js"></script>
+</head>
+<body class="gallery-page">
+  <header><h1>저장된 그림 <small id="count"></small></h1><p><a href="/">그림판으로</a></p></header>
+  <p class="gallery-help">촬영이 끝나거나 다음 촬영이 시작되면 그림이 자동으로 저장되어 이 목록 맨 위에 추가됩니다.</p>
+  <ol id="gallery" class="gallery" aria-live="polite"></ol>
+  <p id="gallery-empty" class="gallery-empty" hidden>아직 저장된 그림이 없습니다. 폰에서 촬영을 시작해 그림을 그려 보세요.</p>
+  <p id="gallery-error" class="gallery-empty" hidden>목록을 불러오지 못했습니다. Canvas 서버가 실행 중인지 확인하세요.</p>
+</body>
+</html>
