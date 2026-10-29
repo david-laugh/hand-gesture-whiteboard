@@ -60,15 +60,13 @@ services:
       MIN_HAND_DETECTION_CONFIDENCE: ${VISION_MIN_HAND_DETECTION_CONFIDENCE:-0.5}
       MIN_TRACKING_CONFIDENCE: ${VISION_MIN_TRACKING_CONFIDENCE:-0.5}
       SWAP_HANDEDNESS: ${VISION_SWAP_HANDEDNESS:-false}
-      # Frame input: subscribe to the gateway's MQTT topic {prefix}/frames/+ .
+      # MQTT in:  {prefix}/frames/+ (gateway)   MQTT out: {prefix}/landmarks/{session_id} (gesture)
       # The broker (hgw-mqtt) is run as described in services/gateway/README.md and must be
       # reachable from hand-net (e.g. `docker network connect hand-net hgw-mqtt`).
       MQTT_ENABLED: ${VISION_MQTT_ENABLED:-true}
       MQTT_HOST: ${VISION_MQTT_HOST:-hgw-mqtt}
       MQTT_PORT: ${VISION_MQTT_PORT:-1883}
       MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-hgw/v1}
-      GESTURE_WS_URL: ${GESTURE_WS_URL:-ws://gesture:8002/ws/landmarks}
-      WS_RECONNECT_INTERVAL_S: ${VISION_WS_RECONNECT_INTERVAL_S:-2}
     expose:
       - "8001"
     volumes:

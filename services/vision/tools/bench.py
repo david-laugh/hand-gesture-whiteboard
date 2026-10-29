@@ -3,17 +3,13 @@
     python -m tools.bench offline --frames 300
         Back-to-back decode → inference → serialize (no network). Gives pipeline capacity.
 
-    python -m tools.bench live --fps 30 --seconds 10
-        Sends frames at a fixed input rate into the async pipeline (latest-wins) and
-        publishes to an in-process mock gesture WS server. Gives input_fps vs
-        processing_fps, drops and websocket_send_ms.
-
     python -m tools.bench http --url http://localhost:8001 --fps 30 --seconds 10
-        Same as live, but POSTs to a running service (/v1/frames) and reads its /metrics.
+        POSTs frames at a fixed rate to a running service (/v1/frames) and reads its /metrics.
 
     python -m tools.bench mqtt --broker-host hgw-mqtt --broker-port 1883 --url http://127.0.0.1:8001
-        Acts as the gateway: publishes gateway-format packets to hgw/v1/frames/{session}
-        and reads the running vision service's /metrics.
+        Acts as the gateway: publishes gateway-format packets to hgw/v1/frames/{session},
+        counts the landmarks vision publishes on hgw/v1/landmarks/{session}, and reads the
+        running vision service's /metrics (input vs processing fps, drops, publish_ms).
 
 Frames come from tools/frames.py (crops of the official test image) unless --video is given.
 """
@@ -21,7 +17,6 @@ Frames come from tools/frames.py (crops of the official test image) unless --vid
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import platform
 import time
@@ -35,7 +30,6 @@ from src.contract import FrameMeta
 from src.detector import HandDetector
 from src.metrics import VisionMetrics, percentile
 from src.pipeline import FramePipeline
-from src.publisher import GesturePublisher
 from tools import assets, frames
 
 
@@ -107,61 +101,6 @@ def run_offline(args) -> dict:
     }
 
 
-async def run_live(args) -> dict:
-    from tests.mock_gesture_server import MockGestureServer
-
-    jpegs = load_frames(args.video, 30)
-    server = MockGestureServer()
-    port = server.start_in_thread()
-    metrics = VisionMetrics()
-    detector = HandDetector(Settings(model_path=str(assets.ensure_model())))
-    publisher = GesturePublisher(f"ws://127.0.0.1:{port}/ws/landmarks", metrics, reconnect_interval_s=0.5)
-    await publisher.start()
-    for _ in range(50):
-        if publisher.connected:
-            break
-        await asyncio.sleep(0.1)
-    pipeline = FramePipeline(detector, metrics, publisher)
-    await pipeline.start()
-
-    # Warm-up outside the measured window
-    for i in range(args.warmup):
-        pipeline.submit(FrameMeta("bench-live", i, i), jpegs[i % len(jpegs)])
-        await asyncio.sleep(1 / args.fps)
-    await asyncio.sleep(0.5)
-    metrics.reset()
-
-    total = int(args.fps * args.seconds)
-    interval = 1.0 / args.fps
-    start = time.perf_counter()
-    for i in range(total):
-        target = start + i * interval
-        delay = target - time.perf_counter()
-        if delay > 0:
-            await asyncio.sleep(delay)
-        pipeline.submit(FrameMeta("bench-live", 10_000 + i, int(time.time() * 1000)), jpegs[i % len(jpegs)])
-    elapsed = time.perf_counter() - start  # input window only
-    await asyncio.sleep(1.0)  # let the last frame finish
-    snap = metrics.snapshot()
-    await pipeline.stop()
-    await publisher.stop()
-    detector.close()
-    server.stop()
-    received = [m for m in server.messages if m["frame_id"] >= 10_000]
-    return {
-        "mode": "live",
-        "target_input_fps": args.fps,
-        "seconds": args.seconds,
-        "elapsed_s": round(elapsed, 3),
-        "frames_submitted": total,
-        "avg_input_fps": round(snap["input_frame_count"] / elapsed, 2),
-        "avg_processing_fps": round(snap["processed_frame_count"] / elapsed, 2),
-        "mock_server_received": len(received),
-        "mock_server_contract_errors": len(server.errors),
-        "metrics": snap,
-    }
-
-
 def _http(method: str, url: str, body: bytes | None = None, headers: dict | None = None):
     # stdlib only, so it also runs inside the service image (no httpx there)
     import urllib.request
@@ -213,9 +152,13 @@ def run_mqtt(args) -> dict:
     base = args.url.rstrip("/")
     session = uuid.uuid4().hex
     topic = f"{args.prefix.strip('/')}/frames/{session}"
+    received: list[dict] = []
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vision-bench-" + session[:8])
+    client.on_message = lambda c, u, m: received.append(json.loads(m.payload))
     client.connect(args.broker_host, args.broker_port)
+    client.subscribe(f"{args.prefix.strip('/')}/landmarks/{session}", qos=0)
     client.loop_start()
+    time.sleep(0.3)  # let the SUBSCRIBE settle
     try:
         _http("POST", f"{base}/metrics/reset")
         start = time.perf_counter()
@@ -240,6 +183,7 @@ def run_mqtt(args) -> dict:
         "target_input_fps": args.fps,
         "elapsed_s": round(elapsed, 3),
         "frames_published": total,
+        "landmarks_received": len(received),
         "avg_input_fps": round(snap["input_frame_count"] / elapsed, 2),
         "avg_processing_fps": round(snap["processed_frame_count"] / elapsed, 2),
         "health": health,
@@ -253,10 +197,6 @@ def main() -> int:
     p_off = sub.add_parser("offline")
     p_off.add_argument("--frames", type=int, default=300)
     p_off.add_argument("--warmup", type=int, default=10)
-    p_live = sub.add_parser("live")
-    p_live.add_argument("--fps", type=float, default=30)
-    p_live.add_argument("--seconds", type=float, default=10)
-    p_live.add_argument("--warmup", type=int, default=10)
     p_http = sub.add_parser("http")
     p_http.add_argument("--url", default="http://localhost:8001")
     p_http.add_argument("--fps", type=float, default=30)
@@ -268,15 +208,13 @@ def main() -> int:
     p_mqtt.add_argument("--prefix", default="hgw/v1")
     p_mqtt.add_argument("--fps", type=float, default=30)
     p_mqtt.add_argument("--seconds", type=float, default=10)
-    for p in (p_off, p_live, p_http, p_mqtt):
+    for p in (p_off, p_http, p_mqtt):
         p.add_argument("--video", help="use frames from this video file instead of the test image")
         p.add_argument("--out", help="also write the JSON report to this file")
     args = parser.parse_args()
 
     if args.mode == "offline":
         report = run_offline(args)
-    elif args.mode == "live":
-        report = asyncio.run(run_live(args))
     elif args.mode == "mqtt":
         report = run_mqtt(args)
     else:

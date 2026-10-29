@@ -1,0 +1,62 @@
+# Vision E2E test environment (operational path) — layered on top of the root compose.yaml.
+#
+#   Phone/laptop camera ─► gateway (/cam) ─► MQTT hgw/v1/frames/+ ─► vision ─► MQTT hgw/v1/landmarks/+ ─► gesture-recorder
+#
+# Run from the repository root:
+#   docker compose -f compose.yaml -f services/vision/e2e/compose.e2e.yaml up -d --build
+#
+# - Does not modify any team member's files. The gateway runs its own code from
+#   services/gateway (bind mount) with the CMD from its Dockerfile.
+# - mqtt and gesture-recorder are TEST-ONLY services that exist only in this file;
+#   the root compose.yaml still defines exactly 4 containers.
+# - gesture-recorder subscribes to hgw/v1/landmarks/+ exactly like Container C will. It
+#   validates every vision message and records one JSON Lines file per camera session into
+#   services/vision/recordings/ (git-ignored). It runs alongside the real gesture service.
+
+services:
+  gateway:
+    command: !reset null            # use services/gateway/Dockerfile CMD (uvicorn, gateway owner's choice)
+    environment:
+      MQTT_HOST: hgw-mqtt
+      MQTT_PORT: "1883"
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-hgw/v1}
+    ports: !override
+      # Host 8000 may be taken; tunnel/laptop access goes through localhost only.
+      - "127.0.0.1:${E2E_GATEWAY_HOST_PORT:-8010}:8000"
+    depends_on:
+      - mqtt
+
+  vision:
+    environment:
+      MQTT_HOST: hgw-mqtt
+      MQTT_PORT: "1883"
+    depends_on:
+      - mqtt
+
+  mqtt:
+    image: eclipse-mosquitto:2
+    container_name: hgw-e2e-mqtt
+    command: ["mosquitto", "-c", "/mosquitto-no-auth.conf"]
+    restart: unless-stopped
+    networks:
+      hand-net:
+        aliases: [hgw-mqtt]          # same broker name as services/gateway/README.md
+    ports:
+      - "127.0.0.1:${E2E_MQTT_HOST_PORT:-11883}:1883"   # gateway's default host port, for host-side tools
+
+  gesture-recorder:
+    image: hand-gesture-whiteboard/vision:dev
+    container_name: hgw-e2e-gesture-recorder
+    command: ["python", "-m", "tests.landmark_recorder", "--host", "hgw-mqtt", "--port", "1883",
+              "--prefix", "${MQTT_TOPIC_PREFIX:-hgw/v1}", "--save-dir", "/app/recordings", "--print-every", "30"]
+    working_dir: /app
+    restart: unless-stopped
+    init: true
+    environment:
+      PYTHONUNBUFFERED: "1"
+    networks:
+      - hand-net
+    volumes:
+      - ./services/vision:/app
+    depends_on:
+      - mqtt

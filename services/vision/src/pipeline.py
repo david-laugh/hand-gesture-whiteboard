@@ -18,7 +18,7 @@ from typing import Any
 from .contract import FrameMeta, build_landmarks_message, serialize
 from .detector import HandDetector, JpegDecodeError, decode_jpeg
 from .metrics import VisionMetrics
-from .publisher import GesturePublisher
+from .mqtt_bus import MqttBus
 
 log = logging.getLogger("vision.pipeline")
 
@@ -48,7 +48,7 @@ class SubmitResult:
 
 
 class FramePipeline:
-    def __init__(self, detector: HandDetector, metrics: VisionMetrics, publisher: GesturePublisher | None) -> None:
+    def __init__(self, detector: HandDetector, metrics: VisionMetrics, publisher: MqttBus | None) -> None:
         self._detector = detector
         self._metrics = metrics
         self._publisher = publisher

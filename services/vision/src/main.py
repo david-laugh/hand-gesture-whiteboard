@@ -17,9 +17,8 @@ from .config import Settings
 from .detector import MEDIAPIPE_API, RUNNING_MODE, HandDetector
 from .frame_input import FrameInputError, check_jpeg, meta_from_headers, parse_ws_frame
 from .metrics import VisionMetrics
-from .mqtt_input import MqttFrameSubscriber
+from .mqtt_bus import MqttBus
 from .pipeline import FramePipeline
-from .publisher import GesturePublisher
 
 log = logging.getLogger("vision")
 
@@ -42,10 +41,10 @@ async def _log_metrics_periodically(metrics: VisionMetrics, interval_s: float) -
         t = snap["timings_ms"]
         log.info(
             "metrics mqtt_msgs=%d input=%d processed=%d dropped=%d detected=%d no_hand=%d invalid=%d failed=%d "
-            "ws_sent=%d ws_unsent=%d input_fps=%.1f processing_fps=%.1f inference_p50=%s p95=%s",
+            "published=%d publish_dropped=%d input_fps=%.1f processing_fps=%.1f inference_p50=%s p95=%s",
             snap["mqtt_message_count"], snap["input_frame_count"], snap["processed_frame_count"], snap["dropped_frame_count"],
             snap["detected_frame_count"], snap["no_hand_frame_count"], snap["invalid_frame_count"],
-            snap["failed_frame_count"], snap["ws_sent_count"], snap["ws_unsent_count"],
+            snap["failed_frame_count"], snap["publish_count"], snap["publish_dropped_count"],
             snap["input_fps"], snap["processing_fps"],
             t["inference_ms"]["p50"], t["inference_ms"]["p95"],
         )
@@ -60,25 +59,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         metrics = VisionMetrics(window=settings.metrics_window)
         # Raises ModelLoadError → startup fails and uvicorn exits non-zero (no silent fallback).
         detector = HandDetector(settings)
-        publisher = None
-        if settings.publish_enabled and settings.gesture_ws_url:
-            publisher = GesturePublisher(
-                settings.gesture_ws_url, metrics,
-                reconnect_interval_s=settings.ws_reconnect_interval_s,
-                open_timeout_s=settings.ws_open_timeout_s,
-                queue_size=settings.ws_queue_size,
-            )
-            await publisher.start()
-        else:
-            log.warning("publishing to gesture service is disabled")
+        # One MQTT connection: frames in from the gateway, landmarks out to gesture.
+        bus = MqttBus(settings, metrics, on_frame=lambda meta, jpeg: pipeline.submit(meta, jpeg)) if settings.mqtt_enabled else None
+        publisher = bus if bus is not None and settings.publish_enabled else None
+        if bus is None:
+            log.warning("MQTT is disabled: no gateway frames in, no landmarks out (HTTP/WS inputs + /v1/detect only)")
+        elif publisher is None:
+            log.warning("publishing landmarks to gesture is disabled (PUBLISH_ENABLED=false)")
         pipeline = FramePipeline(detector, metrics, publisher)
         await pipeline.start()
-        subscriber = None
-        if settings.mqtt_enabled:
-            subscriber = MqttFrameSubscriber(settings, metrics, pipeline.submit)
-            await subscriber.start()
-        else:
-            log.warning("MQTT frame input is disabled; only HTTP/WS inputs are available")
+        if bus is not None:
+            await bus.start()
         metrics_task = asyncio.create_task(_log_metrics_periodically(metrics, settings.metrics_log_interval_s))
 
         app.state.settings = settings
@@ -86,16 +77,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.detector = detector
         app.state.publisher = publisher
         app.state.pipeline = pipeline
-        app.state.subscriber = subscriber
+        app.state.bus = bus
         try:
             yield
         finally:
             metrics_task.cancel()
-            if subscriber is not None:
-                await subscriber.stop()
             await pipeline.stop()
-            if publisher is not None:
-                await publisher.stop()
+            if bus is not None:
+                await bus.stop()
             detector.close()
             log.info("vision service stopped")
 
@@ -114,22 +103,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "running_mode": RUNNING_MODE,
             "num_hands": state.settings.num_hands,
             "active_sessions": state.detector.session_count,
-            "mqtt_enabled": state.subscriber is not None,
-            "mqtt_broker": state.subscriber.broker if state.subscriber else None,
-            "mqtt_topic": state.subscriber.topic if state.subscriber else None,
-            "mqtt_connected": bool(state.subscriber and state.subscriber.connected),
+            "mqtt_enabled": state.bus is not None,
+            "mqtt_broker": state.bus.broker if state.bus else None,
+            "mqtt_connected": bool(state.bus and state.bus.connected),
+            "frames_topic": state.bus.frames_topic if state.bus else None,
             "publish_enabled": state.publisher is not None,
-            "gesture_ws_url": state.settings.gesture_ws_url,
-            "gesture_ws_connected": bool(state.publisher and state.publisher.connected),
+            "landmarks_topic": state.bus.landmarks_topic("{session_id}") if state.publisher else None,
         }
 
     @app.get("/metrics")
     async def get_metrics(request: Request) -> dict:
         snap = request.app.state.metrics.snapshot()
-        publisher = request.app.state.publisher
-        snap["ws_connected"] = bool(publisher and publisher.connected)
-        subscriber = request.app.state.subscriber
-        snap["mqtt_connected"] = bool(subscriber and subscriber.connected)
+        bus = request.app.state.bus
+        snap["mqtt_connected"] = bool(bus and bus.connected)
         return snap
 
     @app.get("/metrics/frames")
@@ -156,7 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/v1/frames", status_code=202)
     async def submit_frame(request: Request) -> dict:
-        """Streaming input: queue the frame (latest-wins); the result is pushed to gesture over WS."""
+        """Streaming input: queue the frame (latest-wins); the result is published to gesture over MQTT."""
         meta, body = await _read_frame(request)
         result = request.app.state.pipeline.submit(meta, body)
         return {
