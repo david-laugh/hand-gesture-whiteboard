@@ -1,0 +1,236 @@
+"""Benchmark the vision pipeline with real inference.
+
+    python -m tools.bench offline --frames 300
+        Back-to-back decode → inference → serialize (no network). Gives pipeline capacity.
+
+    python -m tools.bench live --fps 30 --seconds 10
+        Sends frames at a fixed input rate into the async pipeline (latest-wins) and
+        publishes to an in-process mock gesture WS server. Gives input_fps vs
+        processing_fps, drops and websocket_send_ms.
+
+    python -m tools.bench http --url http://localhost:8001 --fps 30 --seconds 10
+        Same as live, but POSTs to a running service (/v1/frames) and reads its /metrics.
+
+Frames come from tools/frames.py (crops of the official test image) unless --video is given.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import platform
+import time
+from pathlib import Path
+
+import cv2
+import mediapipe as mp
+
+from src.config import Settings
+from src.contract import FrameMeta
+from src.detector import HandDetector
+from src.metrics import VisionMetrics, percentile
+from src.pipeline import FramePipeline
+from src.publisher import GesturePublisher
+from tools import assets, frames
+
+
+def load_frames(video: str | None, count: int) -> list[bytes]:
+    if not video:
+        return frames.sliding_sequence(assets.ensure_test_image(), count=min(count, 30))
+    cap = cv2.VideoCapture(video)
+    out = []
+    while len(out) < count:
+        ok, bgr = cap.read()
+        if not ok:
+            break
+        out.append(frames.encode_jpeg(cv2.resize(bgr, (frames.FRAME_W, frames.FRAME_H))))
+    cap.release()
+    if not out:
+        raise SystemExit(f"no frames read from {video}")
+    return out
+
+
+def environment() -> dict:
+    return {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "mediapipe": mp.__version__,
+        "opencv": cv2.__version__,
+    }
+
+
+def stats(values: list[float]) -> dict:
+    s = sorted(values)
+    return {
+        "n": len(s),
+        "avg": round(sum(s) / len(s), 3),
+        "p50": round(percentile(s, 50), 3),
+        "p95": round(percentile(s, 95), 3),
+        "max": round(s[-1], 3),
+    }
+
+
+def run_offline(args) -> dict:
+    jpegs = load_frames(args.video, args.frames)
+    detector = HandDetector(Settings(model_path=str(assets.ensure_model())))
+    pipeline = FramePipeline(detector, VisionMetrics(), publisher=None)
+    decode, infer, ser, detected = [], [], [], 0
+    for i in range(args.warmup):
+        pipeline.process(FrameMeta("bench-warmup", i, i * 33), jpegs[i % len(jpegs)])
+    t0 = time.perf_counter()
+    for i in range(args.frames):
+        r = pipeline.process(FrameMeta("bench", i, i * 33), jpegs[i % len(jpegs)])
+        decode.append(r.decode_ms)
+        infer.append(r.inference_ms)
+        ser.append(r.serialization_ms)
+        detected += bool(r.message["hands"])
+    elapsed = time.perf_counter() - t0
+    detector.close()
+    return {
+        "mode": "offline",
+        "frames": args.frames,
+        "warmup_frames": args.warmup,
+        "distinct_input_frames": len(jpegs),
+        "detected_frames": detected,
+        "elapsed_s": round(elapsed, 3),
+        "processing_fps": round(args.frames / elapsed, 2),
+        "decode_ms": stats(decode),
+        "inference_ms": stats(infer),
+        "serialization_ms": stats(ser),
+    }
+
+
+async def run_live(args) -> dict:
+    from tests.mock_gesture_server import MockGestureServer
+
+    jpegs = load_frames(args.video, 30)
+    server = MockGestureServer()
+    port = server.start_in_thread()
+    metrics = VisionMetrics()
+    detector = HandDetector(Settings(model_path=str(assets.ensure_model())))
+    publisher = GesturePublisher(f"ws://127.0.0.1:{port}/ws/landmarks", metrics, reconnect_interval_s=0.5)
+    await publisher.start()
+    for _ in range(50):
+        if publisher.connected:
+            break
+        await asyncio.sleep(0.1)
+    pipeline = FramePipeline(detector, metrics, publisher)
+    await pipeline.start()
+
+    # Warm-up outside the measured window
+    for i in range(args.warmup):
+        pipeline.submit(FrameMeta("bench-live", i, i), jpegs[i % len(jpegs)])
+        await asyncio.sleep(1 / args.fps)
+    await asyncio.sleep(0.5)
+    metrics.reset()
+
+    total = int(args.fps * args.seconds)
+    interval = 1.0 / args.fps
+    start = time.perf_counter()
+    for i in range(total):
+        target = start + i * interval
+        delay = target - time.perf_counter()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        pipeline.submit(FrameMeta("bench-live", 10_000 + i, int(time.time() * 1000)), jpegs[i % len(jpegs)])
+    elapsed = time.perf_counter() - start  # input window only
+    await asyncio.sleep(1.0)  # let the last frame finish
+    snap = metrics.snapshot()
+    await pipeline.stop()
+    await publisher.stop()
+    detector.close()
+    server.stop()
+    received = [m for m in server.messages if m["frame_id"] >= 10_000]
+    return {
+        "mode": "live",
+        "target_input_fps": args.fps,
+        "seconds": args.seconds,
+        "elapsed_s": round(elapsed, 3),
+        "frames_submitted": total,
+        "avg_input_fps": round(snap["input_frame_count"] / elapsed, 2),
+        "avg_processing_fps": round(snap["processed_frame_count"] / elapsed, 2),
+        "mock_server_received": len(received),
+        "mock_server_contract_errors": len(server.errors),
+        "metrics": snap,
+    }
+
+
+def _http(method: str, url: str, body: bytes | None = None, headers: dict | None = None):
+    # stdlib only, so it also runs inside the service image (no httpx there)
+    import urllib.request
+
+    req = urllib.request.Request(url, data=body, headers=headers or {}, method=method)
+    with urllib.request.urlopen(req, timeout=5) as resp:  # raises on HTTP errors
+        data = resp.read()
+    return json.loads(data) if data else None
+
+
+def run_http(args) -> dict:
+    jpegs = load_frames(args.video, 30)
+    total = int(args.fps * args.seconds)
+    base = args.url.rstrip("/")
+    _http("POST", f"{base}/metrics/reset")
+    start = time.perf_counter()
+    for i in range(total):
+        delay = start + i / args.fps - time.perf_counter()
+        if delay > 0:
+            time.sleep(delay)
+        _http("POST", f"{base}/v1/frames", jpegs[i % len(jpegs)],
+              {"Content-Type": "image/jpeg", "X-Session-Id": "bench-http",
+               "X-Frame-Id": str(i), "X-Ts": str(int(time.time() * 1000))})
+    elapsed = time.perf_counter() - start  # input window only
+    time.sleep(1.0)
+    snap = _http("GET", f"{base}/metrics")
+    health = _http("GET", f"{base}/healthz")
+    return {
+        "mode": "http",
+        "url": args.url,
+        "target_input_fps": args.fps,
+        "elapsed_s": round(elapsed, 3),
+        "frames_submitted": total,
+        "avg_input_fps": round(snap["input_frame_count"] / elapsed, 2),
+        "avg_processing_fps": round(snap["processed_frame_count"] / elapsed, 2),
+        "health": health,
+        "metrics": snap,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="mode", required=True)
+    p_off = sub.add_parser("offline")
+    p_off.add_argument("--frames", type=int, default=300)
+    p_off.add_argument("--warmup", type=int, default=10)
+    p_live = sub.add_parser("live")
+    p_live.add_argument("--fps", type=float, default=30)
+    p_live.add_argument("--seconds", type=float, default=10)
+    p_live.add_argument("--warmup", type=int, default=10)
+    p_http = sub.add_parser("http")
+    p_http.add_argument("--url", default="http://localhost:8001")
+    p_http.add_argument("--fps", type=float, default=30)
+    p_http.add_argument("--seconds", type=float, default=10)
+    for p in (p_off, p_live, p_http):
+        p.add_argument("--video", help="use frames from this video file instead of the test image")
+        p.add_argument("--out", help="also write the JSON report to this file")
+    args = parser.parse_args()
+
+    if args.mode == "offline":
+        report = run_offline(args)
+    elif args.mode == "live":
+        report = asyncio.run(run_live(args))
+    else:
+        report = run_http(args)
+    if args.mode != "http":
+        report["environment"] = environment()
+    text = json.dumps(report, indent=2)
+    print(text)
+    if args.out:
+        Path(args.out).write_text(text + "\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

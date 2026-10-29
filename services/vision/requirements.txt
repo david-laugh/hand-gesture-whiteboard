@@ -1,6 +1,7 @@
-# vision — planned dependencies (no application code yet)
-fastapi>=0.115,<1.0
-uvicorn[standard]>=0.30
-mediapipe>=0.10.14
-numpy>=1.26
-opencv-python-headless>=4.9
+# vision — pinned to the versions verified in the python:3.11-slim image (2026-10-29)
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+websockets==17.3
+mediapipe==1.2.0
+numpy==2.4.6
+opencv-python-headless==5.0.0.93
