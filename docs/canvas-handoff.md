@@ -44,6 +44,8 @@ hgw/v1/canvas/{session_id}
 - MQTT health endpoint `GET /healthz`
 - `http://localhost:8003/?session_id=<id>` 실시간 그림판 UI
 - 그림판의 펜·지우개·굵기 제어. UI command도 `/ws/control` → MQTT gesture topic을 거친다.
+- session ID별로 stroke 상태와 MQTT topic이 분리된다. URL에 session ID가 없으면 `default` session을 사용한다.
+- Canvas 위 포인터는 선택 도구와 굵기를 원형으로 시각화한다.
 - `/ws/board` session snapshot과 실시간 CanvasMessage broadcast
 
 ## 점 끊김 보강

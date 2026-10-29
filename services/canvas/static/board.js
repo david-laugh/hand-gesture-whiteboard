@@ -4,6 +4,7 @@ const strokes = new Map();
 const sessionId = new URLSearchParams(location.search).get('session_id') || 'default';
 let snapshotSequence = -1;
 let controlSocket, tool = 'pen', strokeId, drawing = false;
+const cursor = document.getElementById('cursor');
 
 function draw() {
   context.clearRect(0, 0, board.width, board.height);
@@ -50,6 +51,16 @@ function point(event) {
   return {x: Math.max(0, Math.min(1, (event.clientX - box.left) / box.width)), y: Math.max(0, Math.min(1, (event.clientY - box.top) / box.height))};
 }
 
+function updateCursor(event) {
+  const box = board.getBoundingClientRect();
+  const size = Number(document.getElementById('size').value) * box.width / board.width;
+  cursor.style.left = `${event.clientX - box.left}px`;
+  cursor.style.top = `${event.clientY - box.top}px`;
+  cursor.style.width = cursor.style.height = `${Math.max(size, 4)}px`;
+  cursor.classList.toggle('eraser-cursor', tool === 'eraser');
+  cursor.style.display = 'block';
+}
+
 function drawingParams() {
   const size = Number(document.getElementById('size').value);
   return tool === 'pen' ? {stroke_id: strokeId, color: '#172554', brush_size: size} : {stroke_id: strokeId, eraser_radius: size / (Math.min(board.width, board.height) * 2)};
@@ -69,9 +80,10 @@ function connectControls() {
 document.getElementById('pen').onclick = () => { tool = 'pen'; document.getElementById('pen').classList.add('selected'); document.getElementById('eraser').classList.remove('selected'); };
 document.getElementById('eraser').onclick = () => { tool = 'eraser'; document.getElementById('eraser').classList.add('selected'); document.getElementById('pen').classList.remove('selected'); };
 document.getElementById('size').oninput = event => { document.getElementById('size-value').textContent = `${event.target.value} px`; };
-board.addEventListener('pointerdown', event => { if (event.button !== 0) return; board.setPointerCapture(event.pointerId); drawing = true; strokeId = crypto.randomUUID(); sendDraw(tool === 'pen' ? 'DRAW_START' : 'ERASE_START', event); });
-board.addEventListener('pointermove', event => { if (drawing) sendDraw(tool === 'pen' ? 'DRAW_MOVE' : 'ERASE_MOVE', event); });
+board.addEventListener('pointerdown', event => { if (event.button !== 0) return; updateCursor(event); board.setPointerCapture(event.pointerId); drawing = true; strokeId = crypto.randomUUID(); sendDraw(tool === 'pen' ? 'DRAW_START' : 'ERASE_START', event); });
+board.addEventListener('pointermove', event => { updateCursor(event); if (drawing) sendDraw(tool === 'pen' ? 'DRAW_MOVE' : 'ERASE_MOVE', event); });
 board.addEventListener('pointerup', event => { if (!drawing) return; drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); });
 board.addEventListener('pointercancel', event => { if (drawing) { drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); } });
+board.addEventListener('pointerleave', () => { if (!drawing) cursor.style.display = 'none'; });
 connect();
 connectControls();
