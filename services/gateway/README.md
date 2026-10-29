@@ -106,7 +106,7 @@ MQTT payload는 Browser WebSocket과 달리 metadata를 포함하는 binary pack
 
 각 WebSocket session은 처리 대기열에 최신 프레임 1개만 보관합니다. 새 프레임이 들어왔을 때 이전 프레임이 아직 MQTT에 발행되지 않았으면 이전 프레임을 버리고 새 프레임으로 교체합니다. 이 latest-wins 방식으로 카메라 FPS가 broker 전송보다 빨라도 오래된 영상 때문에 지연이 누적되지 않습니다.
 
-`GET /healthz`는 MQTT 연결 상태를 포함한 health 응답을, `GET /api/metrics`는 수신·발행·drop·오류 수와 FPS를 반환합니다. 정적 카메라 화면은 `GET /`와 `GET /cam`에서 제공합니다.
+`GET /`는 MQTT 연결과 프레임 수를 보여 주는 대시보드이며, **카메라 열기**로 `/cam`에 이동합니다. `/cam`은 실제 카메라 전송 화면입니다. `GET /healthz`는 MQTT 연결 상태를 포함한 health 응답을, `GET /api/metrics`는 수신·발행·drop·오류 수와 FPS를 반환합니다.
 
 ## 환경 변수
 

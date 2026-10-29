@@ -37,9 +37,16 @@ def create_app(settings=None, transport=None):
     app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
     @app.get("/")
+    async def dashboard():
+        return FileResponse(ROOT / "templates" / "dashboard.html")
+
     @app.get("/cam")
-    async def index():
+    async def camera():
         return FileResponse(ROOT / "templates" / "index.html")
+
+    @app.get("/api/info")
+    async def info():
+        return {"camera_url": "/cam", "transport": "mqtt", "mqtt_connected": link.connected}
 
     @app.get("/healthz")
     async def health():

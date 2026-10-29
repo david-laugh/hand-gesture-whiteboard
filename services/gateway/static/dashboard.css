@@ -1,0 +1,12 @@
+:root { color: #e8e4da; background: #1d2326; font-family: system-ui, "Apple SD Gothic Neo", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+main { width: min(100%, 540px); }
+.eyebrow { margin: 0; font-size: .75rem; letter-spacing: .14em; color: #c98a3c; }
+h1 { margin: .35rem 0; font-size: clamp(2rem, 8vw, 3.25rem); }
+.summary, .hint { color: #b6c0c3; }.hint { font-size: .9rem; }
+.card { margin: 2rem 0 1rem; padding: 1.25rem; border: 1px solid #3a4448; border-radius: 10px; background: #222b2e; }
+.label { margin: 0; color: #b6c0c3; font-size: .9rem; }.state { margin: .35rem 0 1.25rem; font-size: 1.3rem; font-weight: 700; }
+.ok { color: #5fae82; }.error { color: #e0644d; }
+dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin: 0; } dt { font-size: .8rem; color: #b6c0c3; } dd { margin: .25rem 0 0; font-size: 1.25rem; font-weight: 700; }
+.camera-link { display: block; padding: .9rem 1rem; border-radius: 6px; color: #1d2326; background: #c98a3c; text-align: center; text-decoration: none; font-weight: 700; }
