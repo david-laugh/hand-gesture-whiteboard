@@ -1,0 +1,8 @@
+{
+  "type": "landmarks",
+  "session_id": "sample-session-001-nohand",
+  "frame_id": 2,
+  "ts": 1793239995792,
+  "hands": [],
+  "gesture": null
+}
