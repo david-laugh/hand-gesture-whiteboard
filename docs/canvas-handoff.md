@@ -19,30 +19,31 @@ A Gateway → B Vision → C Gesture → D Canvas
 
 ## A → B → C → D MQTT 통합 계획
 
-이 절은 전체 팀이 합의해야 할 **계획**이다. Canvas(D)의 현재 입력/출력 topic만 구현되어 있으며, A→B와 B→C topic은 해당 서비스 담당자가 contract를 확정한 후 구현한다. Canvas를 C로 부르지 않고 역할을 명확히 구분한다: **C는 Gesture command producer, D는 Canvas consumer/operation producer**다.
+이 절은 전체 팀이 합의해야 할 **계획과 현재 구현 상태**다. `origin/feature/vision`의 MQTT 발행과 `origin/feature/gesture`의 MQTT/웹소켓 수신 구현을 기준으로 2026-10-29에 확인했다. Canvas를 C로 부르지 않고 역할을 명확히 구분한다: **C는 Gesture command producer, D는 Canvas consumer/operation producer**다.
 
-| 순서 | 발행 서비스 → 구독 서비스 | 제안 topic | 전달 데이터 | 반드시 보장할 것 |
+| 순서 | 발행 서비스 → 구독 서비스 | topic / 연결 | 전달 데이터 | 현재 상태 |
 | --- | --- | --- | --- | --- |
-| 1 | A Gateway → B Vision | `{prefix}/frames/{session_id}` | camera frame 참조 또는 JPEG, frame_id, timestamp_ms, trace_id | 같은 세션·프레임 식별자 전달, 대용량 frame 정책 합의 |
-| 2 | B Vision → C Gesture | `{prefix}/landmarks/{session_id}` | hand landmark 좌표, handedness, confidence, frame_id, timestamp_ms, trace_id | 좌표계·손 선택·낮은 confidence 처리 기준 합의 |
-| 3 | C Gesture → D Canvas | `{prefix}/gestures/{session_id}` | `GestureMessage`: gesture, normalized pointer, stroke_id, style | START/MOVE/END 순서, 0~1 pointer, session 일치 |
-| 4 | D Canvas → A/renderer | `{prefix}/canvas/{session_id}` | `CanvasMessage`: sequence, operations, history | operation 순서 적용, reconnect 복구 정책 |
+| 1 | A Gateway → B Vision | `{prefix}/frames/{session_id}` | binary FrameMessage metadata + JPEG | Vision 브랜치에서 MQTT 수신 구현됨 |
+| 2 | B Vision → C Gesture | MQTT `{prefix}/landmarks/{session_id}` 또는 WebSocket `ws://gesture:8002/ws/landmarks` | Vision landmark JSON 1개 = 추론 frame 1개 | 두 경로 모두 Gesture 브랜치에서 수신 구현됨 |
+| 3 | C Gesture → D Canvas | `{prefix}/gestures/{session_id}` | 레포 `GestureMessage`, QoS 0 / retain false | 현재 `IDLE`, `DRAW_START/MOVE/END` 발행 구현됨 |
+| 4 | D Canvas → A/renderer | `{prefix}/canvas/{session_id}` | `CanvasMessage`: sequence, operations, history | Canvas에서 구현됨 |
 
-`{prefix}` 기본값은 `hgw/v1`이다. 1·2번 topic은 팀 제안이며 아직 Canvas 코드나 공통 contract에 고정하지 않았다. 이를 확정할 때도 `session_id`, `frame_id`, `timestamp_ms`, `trace_id`의 이름과 의미를 A부터 D까지 동일하게 유지한다.
+`{prefix}` 기본값은 `hgw/v1`이다. Vision이 MQTT 발행으로 바뀌더라도 Gesture는 같은 adapter를 거쳐 처리하므로 Canvas 변경은 필요 없다. 다만 capture 시각을 E2E 결과까지 보존할지 여부는 아래의 시간 필드 주의사항을 팀에서 결정해야 한다.
 
 ### 1. A(Gateway) → B(Vision): 카메라 입력 계획
 
 1. A는 QR 또는 연결 사용자마다 고유 `session_id`를 만든다. `default`는 로컬 테스트 전용이다.
 2. A는 각 frame에 증가하는 `frame_id`, 캡처 시각 `timestamp_ms`, 추적용 `trace_id`를 넣는다.
-3. JPEG를 MQTT payload에 직접 실을지, object URL/HTTP endpoint 참조만 실을지 먼저 결정한다. MQTT payload 상한과 broker 부하 때문에 고해상도 영상은 URL/스트림 참조 방식을 우선 검토한다.
+3. 현재 Vision MQTT 입력은 `[uint32 BE metadata 길이][FrameMessage JSON][JPEG]` binary payload를 사용한다. Gateway는 이 framing을 유지해야 하며, landmark JSON topic과 혼용하지 않는다.
 4. B는 최신 frame만 처리하는 drop policy를 둔다. 늦게 도착한 오래된 frame을 모두 처리하면 손 움직임과 그림이 지연된다.
 
 ### 2. B(Vision) → C(Gesture): 좌표 계약과 보강 계획
 
 1. B는 선택한 손가락 tip의 좌표, 가능하면 손 전체 landmark, handedness, confidence를 C로 보낸다.
 2. 좌표계는 **이미지 폭/높이 기준 normalized 0~1**로 통일한다. C는 mirror된 사용자 미리보기인지 원본 카메라인지 한 번만 변환하고, 같은 축을 D까지 유지한다.
-3. B는 confidence가 낮거나 landmark가 없을 때 `pointer`를 억지로 이전 값으로 반복 발행하지 않는다. `hand_present: false` 또는 명확한 상태를 보내고 C가 현재 stroke를 안전하게 종료한다.
-4. C는 B의 `frame_id`와 timestamp를 보존해 지연·누락을 관측한다. 과거 frame은 버리고 새 frame을 우선하는 정책을 사용한다.
+3. B는 손이 없으면 명시적으로 `hands: []`를 발행한다. C는 이를 받아 진행 중인 stroke를 debounce 후 안전하게 종료한다.
+4. `hands[].score`는 **handedness(Left/Right) 분류 점수**이며 손 검출 신뢰도가 아니다. Gesture pose quality의 threshold로 사용하지 않는다.
+5. Vision은 처리량을 넘는 frame을 latest-wins 방식으로 건너뛸 수 있다. C는 연속 `frame_id`를 가정하지 않고 `ts` 간격과 서버 수신 gap을 사용한다.
 
 ### Vision 샘플 기준: C가 실제로 받을 데이터
 
@@ -66,24 +67,28 @@ A Gateway → B Vision → C Gesture → D Canvas
 1. `hands`의 각 원소에는 `handedness`, `score`, 21개 `[x, y, z]` landmark가 있다. `x/y`는 이미 normalized 좌표이므로 C는 선택한 fingertip의 `x/y`를 Canvas pointer 후보로 쓸 수 있다. `z`는 Canvas pointer에 보내지 않되, C가 gesture 판정에 사용할 수 있다.
 2. `no_hand.json`은 `hands: []`, `gesture: null`이다. C는 빈 배열을 받으면 draw를 시작하지 않고, 이미 진행 중인 stroke가 있으면 `DRAW_END` 또는 `ERASE_END`를 한 번 발행한 뒤 idle 상태가 되어야 한다.
 3. `continuous_frames.json`은 `frame_id` 100~129의 30개 메시지이며 `ts`가 33ms 간격이다. C의 filter·outlier·stroke lifecycle 회귀 테스트 입력으로 사용한다. 단, 정지 사진 crop 이동 데이터라 손 모양 변화 gesture의 완전한 검증 자료는 아니다.
-4. Vision payload의 `ts`는 Canvas `GestureMessage.timestamp_ms`에 그대로 매핑한다. Vision에는 `trace_id`가 없으므로 C가 session별 또는 frame별 고유 trace ID를 생성해 넣는다. `message_type`은 C output에서 `"gesture"`, `schema_version`은 `"1.0.0"`으로 채운다.
+4. Vision에는 `trace_id`가 없으므로 Gesture adapter가 `{session_id}-{frame_id}` 형식으로 생성한다. C output의 `message_type`은 `"gesture"`, `schema_version`은 `"1.0.0"`으로 채운다.
 5. `gesture`는 Vision 샘플에서 `null`이다. 현 단계에서는 C가 landmark를 직접 판정해 draw/erase/idle을 만들며, 이후 B가 gesture hint를 제공해도 C가 최종 Canvas 명령을 결정한다.
+
+> 시간 필드 주의: Vision의 `ts`는 브라우저 캡처 시각이며 C의 필터·지연 경고에 사용된다. 하지만 현재 Gesture 구현이 Canvas에 발행하는 `GestureMessage.timestamp_ms`는 C 처리 시각이다. 원본 캡처 시각을 Canvas output까지 추적해야 한다면 `captured_at_ms` 같은 contract 필드를 공통 schema에 추가하는 별도 변경이 필요하다. 현재는 동일 `session_id`와 `frame_id`, adapter가 만든 `trace_id`로 흐름을 추적한다.
+
+> 중복 입력 주의: Gesture는 MQTT와 WebSocket 입력을 모두 켤 수 있지만 deduplication하지 않는다. Vision이 같은 frame을 두 경로로 동시에 보내면 C가 두 번 처리하고 Canvas에 중복 stroke가 생긴다. 통합 환경에서는 **Vision→Gesture 입력 경로를 MQTT 또는 WebSocket 하나만 활성화**한다. MQTT 전환 검증 시 `WS_INPUT_ENABLED=false` 또는 Vision의 WebSocket 송신 비활성화가 필요하다.
 
 ### B payload를 C의 Canvas 입력으로 바꾸는 정확한 흐름
 
-1. C는 `{prefix}/landmarks/{session_id}`를 구독한다. 이 topic은 위 Vision 샘플을 반영한 **제안**이며 B/C 담당자가 확정해야 한다.
-2. `hands`가 비어 있거나 선택한 hand의 `score`가 threshold 미만이면 active stroke를 끝내고 해당 frame은 pointer로 발행하지 않는다.
+1. C는 현재 `{prefix}/landmarks/+` MQTT 구독과 `/ws/landmarks` WebSocket 수신을 모두 지원한다. Vision이 MQTT로 발행하면 전자를, `GESTURE_WS_URL`을 설정한 기존 Vision 실행은 후자를 사용한다. 두 입력은 같은 adapter/state machine으로 합류한다.
+2. `hands`가 비어 있으면 active stroke를 종료한다. `score`는 handedness 점수이므로 threshold로 손을 버리지 않는다.
 3. C는 21개 landmark 중 팀이 정한 pointer landmark(예: index fingertip)를 선택한다. camera preview를 mirror했다면 이 시점에만 `x = 1 - x`를 적용하고 이후에는 다시 뒤집지 않는다.
-4. C는 EMA/median filter와 outlier 검사 후 `pointer: {"x": 0..1, "y": 0..1}`를 만든다. `frame_id`는 B 값을 유지하고 `timestamp_ms`에는 `ts`를 넣는다.
+4. C는 One-Euro filter와 outlier/pose 검사를 거쳐 `pointer: {"x": 0..1, "y": 0..1}`를 만든다. Vision 좌표가 frame 밖으로 나갈 수 있으므로 C가 clamp한다. `frame_id`는 B 값을 유지한다.
 5. C는 도구 판정 결과를 `DRAW_*` 또는 `ERASE_*`로, 동일 stroke의 ID와 함께 `{prefix}/gestures/{session_id}`에 발행한다.
 6. D는 이 입력만 처리해 `CanvasMessage` operation을 `{prefix}/canvas/{session_id}`에 발행한다. D는 Vision의 `hands` payload를 직접 구독하지 않는다.
 
 ### 3. C(Gesture): B 좌표를 연속된 그림 명령으로 변환하는 계획
 
-1. C는 B 좌표를 받아 dead zone, confidence threshold, 손가락 gesture 판정으로 펜/지우개/중지를 결정한다.
+1. C는 B 좌표를 받아 pose 판정과 debounce로 **현재는** `IDLE`, `DRAW_START`, `DRAW_MOVE`, `DRAW_END`만 발행한다. 실제 손등 녹화 748 frame은 이 상태 전이와 WebSocket 입력으로 검증됐다.
 2. draw 시작 때 `DRAW_START`, 이동 때 `DRAW_MOVE`, 손실·도구 전환·종료 때 반드시 `DRAW_END`를 보낸다. `stroke_id`는 한 선 전체에 동일해야 한다.
-3. 지우개는 `ERASE_START/MOVE/END`를 사용한다. 펜은 `params.color`(`#RRGGBB`), `params.brush_size`(px), 지우개는 `params.eraser_radius`를 함께 보낸다.
-4. C의 첫 보강 단계는 exponential moving average(EMA) 또는 median filter로 landmark jitter를 줄이는 것이다. 너무 강한 filter는 그림이 손보다 늦게 따라오므로 실제 카메라 FPS에서 조정한다.
+3. 지우개·줌·undo/redo/clear는 Canvas contract에는 준비되어 있으나 Gesture pose/state machine에는 아직 구현되지 않았다. 해당 기능을 추가할 때 `ERASE_START/MOVE/END`, `params.eraser_radius` 등 C contract를 별도 테스트와 함께 확장한다.
+4. C는 이미 One-Euro filter를 적용한다. filter를 추가로 강하게 만들기 전에 실제 카메라 FPS에서 지연을 측정한다.
 5. C는 이전 좌표와의 거리·시간을 함께 판단한다. 갑자기 멀리 튄 좌표는 outlier로 버리고, 일정 시간 landmark가 없으면 stroke를 종료한다.
 
 ### 4. D(Canvas): 점 끊김을 줄이는 현재 보강과 후속 계획
@@ -199,16 +204,15 @@ PYTHONPATH=services/canvas python -m unittest discover -s services/canvas/tests 
 
 아래 순서대로 진행하면 A → B → C → D 통합을 가장 적은 변경으로 검증할 수 있다. **Canvas 담당자가 아닌 서비스의 파일은 이 문서만으로 수정하지 말고, 해당 서비스 담당자와 계약을 확인한 후 변경한다.**
 
-1. **B(Vision) → C(Gesture) 입력 계약을 확정한다.**
-   - B는 session별 hand landmark, handedness, confidence, frame timestamp를 C가 읽을 수 있는 형식으로 전달한다.
-   - B→C의 MQTT topic 또는 IPC 방식은 아직 정해지지 않았다. Canvas topic을 재사용하지 않는다.
-   - C가 jitter를 줄일 filtering 주기와 gesture 판정 임계값을 이 단계에서 합의한다.
+1. **B(Vision) → C(Gesture)의 MQTT 전환을 한 경로로 검증한다.**
+   - 최신 Vision은 `hgw/v1/landmarks/{session_id}` 발행을, 최신 Gesture는 `hgw/v1/landmarks/+` 구독을 구현했다.
+   - 현재 WebSocket 방식도 유지되므로 한 실행에서는 MQTT 또는 WebSocket 중 하나만 활성화한다. 두 경로의 중복 발행은 금지한다.
+   - 748-frame 실제 손등 녹화와 Vision sample을 MQTT 경로에서도 재생해 동일한 `DRAW_*` 결과가 나오는지 확인한다.
 
-2. **C(Gesture)에 Canvas용 command publisher를 구현한다.**
-   - B의 landmark를 `DRAW_*`, `ERASE_*`, `UNDO`, `REDO`, `CLEAR`로 판정한다.
-   - session별 `hgw/v1/gestures/{session_id}`에 schema-valid `GestureMessage`를 QoS 0, retain false로 발행한다.
-   - `pointer.x/y`는 반드시 0~1 normalized 값, topic suffix와 payload `session_id`는 반드시 같은 값으로 만든다.
-   - 한 선은 같은 `stroke_id`를 이용해 `*_START → *_MOVE... → *_END`로 발행하고, `frame_id`는 session 안에서 증가시킨다.
+2. **C(Gesture)의 지원 범위를 명확히 확장한다.**
+   - 현재 C는 schema-valid `GestureMessage`를 QoS 0, retain false로 발행하며 `IDLE`, `DRAW_START/MOVE/END`만 생성한다.
+   - pointer는 C에서 0~1로 clamp하고, 같은 stroke는 같은 `stroke_id`로 발행한다.
+   - 지우개·색상·굵기·줌·undo/redo/clear는 Canvas는 지원하지만 C의 gesture pose/state machine은 아직 미구현이다. 기능별 command·파라미터·회귀 녹화를 합의한 다음 추가한다.
 
 3. **A(Gateway)가 QR/접속 사용자와 `session_id`를 하나로 고정한다.**
    - A→B→C→D 전체에서 동일 session ID를 전달한다. URL `?session_id=default`는 개발 편의용 기본 session일 뿐, 실제 사용자 식별자로 쓰지 않는다.
@@ -250,8 +254,10 @@ PYTHONPATH=services/canvas python -m unittest discover -s services/canvas/tests 
 
 | 우선순위 | 담당 | 작업 | Canvas 변경 필요 여부 |
 | --- | --- | --- | --- |
-| 높음 | B/C | B landmark 출력 형식과 B→C MQTT/IPC topic을 정하고 C가 gesture 명령을 생성 | 현재 Canvas 변경 없음 |
+| 높음 | B/C | 실제 구현된 `hgw/v1/landmarks/+` MQTT 경로를 WebSocket 단독 경로와 중복 없이 선택·E2E 검증 | 현재 Canvas 변경 없음 |
 | 높음 | A/Gateway | QR 또는 접속 사용자를 고유 `session_id`로 만들고 A→B→C→D에서 유지 | 현재 Canvas 변경 없음 |
+| 높음 | B/C/Contract | capture `ts`를 Canvas output까지 보존할지 결정. 필요 시 공통 contract에 `captured_at_ms` 추가 | 공통 contract 변경 승인 필요 |
+| 중간 | C Gesture | 지우개·색상·굵기 및 기타 Canvas command pose/state machine 구현 | Canvas contract는 이미 준비됨 |
 | 높음 | Infra | 인증 없는 개발용 broker를 TLS·계정·ACL broker로 교체 | 설정/배포 변경 필요 |
 | 중간 | Gateway/renderer | `{prefix}/canvas/{session}` 구독, sequence 처리, reconnect snapshot 전략 구현 | Canvas MQTT snapshot 요구 시 확장 필요 |
 | 중간 | Canvas | invalid payload metrics, 처리 지연 metrics, MQTT replay/snapshot 지원 | Canvas 후속 개발 |
