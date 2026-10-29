@@ -41,6 +41,9 @@ COUNTER_NAMES = (
     "ws_send_error_count",
     "ws_connect_attempt_count",
     "ws_connect_count",
+    "mqtt_message_count",
+    "mqtt_connect_count",
+    "mqtt_disconnect_count",
 )
 
 
