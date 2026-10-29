@@ -24,7 +24,7 @@ class Settings:
         self.prefix = os.getenv("MQTT_TOPIC_PREFIX", "hgw/v1").strip("/")
         self.width = int(os.getenv("CANVAS_WIDTH", "1280"))
         self.height = int(os.getenv("CANVAS_HEIGHT", "720"))
-        self.smoothing = float(os.getenv("CANVAS_SMOOTHING", ".55"))
+        self.smoothing = float(os.getenv("CANVAS_SMOOTHING", "1.0"))
         self.segment_px = float(os.getenv("CANVAS_SEGMENT_PX", "8"))
 
 

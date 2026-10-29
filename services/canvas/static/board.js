@@ -63,7 +63,7 @@ function apply(operations, reset = false) {
     else if (operation.type.endsWith('_append')) strokes.get(operation.stroke_id)?.points.push(...operation.points);
     else if (operation.type === 'remove_stroke') strokes.delete(operation.stroke_id);
   }
-  draw(); document.getElementById('empty').hidden = strokes.size > 0;
+  draw();
 }
 
 function connect() {

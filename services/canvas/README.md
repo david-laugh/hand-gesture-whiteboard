@@ -171,7 +171,7 @@ Canvas는 C가 보낸 normalized `pointer` `{x: 0..1, y: 0..1}`를 고정된 `12
 | `MQTT_TOPIC_PREFIX` | `hgw/v1` | MQTT topic prefix |
 | `CANVAS_WIDTH` | `1280` | output canvas 폭(px) |
 | `CANVAS_HEIGHT` | `720` | output canvas 높이(px) |
-| `CANVAS_SMOOTHING` | `0.55` | 위치 완화 비율. 작을수록 더 부드럽지만 지연이 늘어남 |
+| `CANVAS_SMOOTHING` | `1.0` | 위치 완화 비율. `1.0`은 완화 없음(Gesture가 이미 One-Euro filter 적용). 작을수록 부드럽지만 지연이 늘어남 |
 | `CANVAS_SEGMENT_PX` | `8` | 보간 점 최대 간격(px) |
 
 ## 운영 전 필요한 MQTT 사항
