@@ -2,14 +2,13 @@
 
 - Parsing tests use the gateway's own packet code (services/gateway/src/protocol.py,
   loaded read-only) so a change in the gateway wire format breaks these tests.
-- The broker test needs a running MQTT broker: set VISION_MQTT_BROKER=host:port
-  (e.g. `docker run --rm -d -p 127.0.0.1:18830:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf`).
+- Broker tests use the `mqtt_broker` fixture (VISION_MQTT_BROKER=host:port, or a throwaway
+  docker mosquitto started by conftest).
 """
 
 from __future__ import annotations
 
 import importlib.util
-import os
 import struct
 import time
 import uuid
@@ -112,62 +111,77 @@ def test_rejects_oversized_payload(gateway, jpeg):
                          schema_version="1.0.0", max_bytes=len(packet) - 1)
 
 
-# -- broker integration (real inference + mock gesture server) -----------------------------
+# -- broker integration: gateway packets in → inference → landmarks out ------------------
 
-BROKER = os.getenv("VISION_MQTT_BROKER")
-
-
-@pytest.mark.model
-@pytest.mark.skipif(not BROKER, reason="set VISION_MQTT_BROKER=host:port to run against a real MQTT broker")
-def test_frames_from_broker_reach_gesture(settings, hand_jpeg, no_hand_jpeg):
-    import paho.mqtt.client as mqtt
+@pytest.fixture
+def app_client(settings, mqtt_broker, mqtt_prefix):
     from fastapi.testclient import TestClient
 
     from src.main import create_app
-    from tests.mock_gesture_server import MockGestureServer
 
-    host, port = BROKER.rsplit(":", 1)
-    prefix = f"test-{uuid.uuid4().hex[:8]}/v1"  # isolate from other publishers on the broker
-    gesture = MockGestureServer()
-    gesture.start_in_thread()
-    app = create_app(replace(
-        settings, mqtt_enabled=True, mqtt_host=host, mqtt_port=int(port), mqtt_topic_prefix=prefix,
-        gesture_ws_url=f"ws://127.0.0.1:{gesture.port}/ws/landmarks", ws_reconnect_interval_s=0.2))
+    app = create_app(replace(settings, mqtt_enabled=True, mqtt_host=mqtt_broker.host,
+                             mqtt_port=mqtt_broker.port, mqtt_topic_prefix=mqtt_prefix))
+    with TestClient(app) as client:
+        _wait(lambda: client.get("/healthz").json()["mqtt_connected"])
+        time.sleep(0.3)  # let the SUBSCRIBE settle before publishing (QoS 0, no retain)
+        yield client
 
-    publisher = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
-    publisher.connect(host, int(port))
-    publisher.loop_start()
+
+@pytest.fixture
+def gateway_publisher(mqtt_broker):
+    import paho.mqtt.client as mqtt
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.connect(mqtt_broker.host, mqtt_broker.port)
+    client.loop_start()
+    yield client
+    client.loop_stop()
+    client.disconnect()
+
+
+def _wait(predicate, timeout=10.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.05)
+    raise AssertionError("condition not met in time")
+
+
+@pytest.mark.model
+def test_gateway_frames_to_landmarks_topic(app_client, gateway_publisher, recorder, mqtt_prefix, hand_jpeg, no_hand_jpeg):
     session = uuid.uuid4().hex
-    try:
-        with TestClient(app) as client:
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                health = client.get("/healthz").json()
-                if health["mqtt_connected"] and health["gesture_ws_connected"]:
-                    break
-                time.sleep(0.05)
-            assert health["mqtt_connected"] and health["gesture_ws_connected"], health
-            time.sleep(0.3)  # let the SUBSCRIBE settle before publishing (QoS 0, no retain)
+    frames_topic = f"{mqtt_prefix}/frames/{session}"
+    gateway_publisher.publish(frames_topic, frames.gateway_packet(session, 0, hand_jpeg, 111)).wait_for_publish()
+    assert recorder.wait_for(1, timeout=10)
+    gateway_publisher.publish(frames_topic, frames.gateway_packet(session, 1, no_hand_jpeg, 222)).wait_for_publish()
+    assert recorder.wait_for(2, timeout=10)
+    # malformed packet: counted as invalid, never forwarded
+    gateway_publisher.publish(frames_topic, bytes([0, 0, 0, 2]) + b"{}garbage").wait_for_publish()
+    time.sleep(0.5)
 
-            publisher.publish(f"{prefix}/frames/{session}", frames.gateway_packet(session, 0, hand_jpeg, 111)).wait_for_publish()
-            assert gesture.wait_for(1, timeout=10)
-            publisher.publish(f"{prefix}/frames/{session}", frames.gateway_packet(session, 1, no_hand_jpeg, 222)).wait_for_publish()
-            assert gesture.wait_for(2, timeout=10)
-            # malformed packet: counted as invalid, never forwarded
-            publisher.publish(f"{prefix}/frames/{session}", b"\x00\x00\x00\x02{}garbage").wait_for_publish()
-            time.sleep(0.5)
-
-            snap = client.get("/metrics").json()
-            records = client.get("/metrics/frames").json()
-    finally:
-        publisher.loop_stop()
-        publisher.disconnect()
-        gesture.stop()
-
-    first, second = gesture.messages[:2]
+    snap = app_client.get("/metrics").json()
+    records = app_client.get("/metrics/frames").json()
+    first, second = recorder.messages[:2]
     assert (first["session_id"], first["frame_id"], first["ts"], len(first["hands"])) == (session, 0, 111, 1)
     assert (second["frame_id"], second["ts"], second["hands"]) == (1, 222, [])
-    assert gesture.errors == []
+    assert recorder.errors == []
     assert snap["mqtt_message_count"] == 3 and snap["invalid_frame_count"] == 1
-    assert snap["processed_frame_count"] == 2
+    assert snap["processed_frame_count"] == 2 and snap["publish_count"] == 2
     assert all(r.get("trace_id") for r in records if r["session_id"] == session)
+
+
+@pytest.mark.model
+def test_reconnects_after_broker_restart(app_client, gateway_publisher, recorder, mqtt_broker, mqtt_prefix, hand_jpeg):
+    mqtt_broker.restart()  # skips unless the broker is the docker-managed test broker
+    _wait(lambda: not app_client.get("/healthz").json()["mqtt_connected"] or
+          app_client.get("/metrics").json()["mqtt_disconnect_count"] >= 1, timeout=15)
+    _wait(lambda: app_client.get("/healthz").json()["mqtt_connected"], timeout=20)
+    _wait(lambda: recorder._client.is_connected() and gateway_publisher.is_connected(), timeout=20)
+    time.sleep(0.5)  # resubscribe after reconnect
+    session = uuid.uuid4().hex
+    gateway_publisher.publish(f"{mqtt_prefix}/frames/{session}", frames.gateway_packet(session, 0, hand_jpeg, 5)).wait_for_publish()
+    assert recorder.wait_for(1, timeout=10)
+    assert recorder.messages[-1]["session_id"] == session
+    snap = app_client.get("/metrics").json()
+    assert snap["mqtt_disconnect_count"] >= 1 and snap["mqtt_connect_count"] >= 2

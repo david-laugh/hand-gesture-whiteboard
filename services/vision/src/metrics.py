@@ -4,7 +4,7 @@ All timings are milliseconds. Each timing is a separate stage:
   decode_ms          JPEG decode + BGR→RGB
   inference_ms       HandLandmarker.detect_for_video() only
   serialization_ms   contract dict build + json.dumps
-  websocket_send_ms  await ws.send() for one message
+  publish_ms         paho publish() call for one landmarks message (enqueue to paho's network thread)
   queue_wait_ms      frame received → processing started (latest-wins slot)
   processing_ms      decode + inference + serialization for one frame
 
@@ -23,7 +23,7 @@ TIMING_NAMES = (
     "decode_ms",
     "inference_ms",
     "serialization_ms",
-    "websocket_send_ms",
+    "publish_ms",
     "queue_wait_ms",
     "processing_ms",
 )
@@ -36,11 +36,9 @@ COUNTER_NAMES = (
     "failed_frame_count",
     "detected_frame_count",
     "no_hand_frame_count",
-    "ws_sent_count",
-    "ws_unsent_count",
-    "ws_send_error_count",
-    "ws_connect_attempt_count",
-    "ws_connect_count",
+    "publish_count",
+    "publish_dropped_count",
+    "publish_error_count",
     "mqtt_message_count",
     "mqtt_connect_count",
     "mqtt_disconnect_count",

@@ -6,7 +6,7 @@ never sends images, the frontend draws the skeleton from landmark coordinates.
 
     python -m tools.visual_check --source 0                      # webcam 0
     python -m tools.visual_check --source clip.mp4 --dump out.jsonl
-    python -m tools.visual_check --source 0 --gesture-url ws://localhost:8002/ws/landmarks
+    python -m tools.visual_check --source 0 --mqtt localhost:11883   # also publish to hgw/v1/landmarks/{session}
     python -m tools.visual_check --source tests/data/woman_hands.jpg --save annotated.jpg --no-window
 
 Frames go through the same path as the service: JPEG encode → decode → HandLandmarker
@@ -69,7 +69,8 @@ def main() -> int:
     parser.add_argument("--source", default="0", help="camera index, video file, or image file")
     parser.add_argument("--model", default=str(assets.MODEL_PATH))
     parser.add_argument("--session-id", default="local-camera")
-    parser.add_argument("--gesture-url", help="also send each message to this gesture WS server")
+    parser.add_argument("--mqtt", metavar="HOST:PORT", help="also publish each message to {prefix}/landmarks/{session-id}")
+    parser.add_argument("--prefix", default="hgw/v1")
     parser.add_argument("--dump", help="append every contract message to this JSON Lines file")
     parser.add_argument("--save", help="save the last annotated frame to this image file")
     parser.add_argument("--max-frames", type=int, default=0, help="stop after N frames (0 = no limit)")
@@ -81,11 +82,16 @@ def main() -> int:
     detector = HandDetector(Settings(model_path=args.model))
     pipeline = FramePipeline(detector, VisionMetrics(), publisher=None)
 
-    ws = None
-    if args.gesture_url:
-        from websockets.sync.client import connect
-        ws = connect(args.gesture_url, open_timeout=3)  # fails loudly if the server is not up
-        print("connected to", args.gesture_url)
+    mqttc = None
+    if args.mqtt:
+        import paho.mqtt.client as mqtt
+
+        host, port = args.mqtt.rsplit(":", 1)
+        mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        mqttc.connect(host, int(port))  # fails loudly if the broker is not up
+        mqttc.loop_start()
+        topic = f"{args.prefix.strip('/')}/landmarks/{args.session_id}"
+        print("publishing to", topic, "on", args.mqtt)
 
     dump = open(args.dump, "a", encoding="utf-8") if args.dump else None
     still = None
@@ -111,8 +117,8 @@ def main() -> int:
             result = pipeline.process(meta, frames.encode_jpeg(bgr))
             validate_landmarks_message(result.message)
             rate.mark()
-            if ws is not None:
-                ws.send(result.payload)
+            if mqttc is not None:
+                mqttc.publish(topic, result.payload, qos=0)
             if dump is not None:
                 dump.write(result.payload + "\n")
             annotated = bgr
@@ -132,8 +138,9 @@ def main() -> int:
             cap.release()
         if dump is not None:
             dump.close()
-        if ws is not None:
-            ws.close()
+        if mqttc is not None:
+            mqttc.loop_stop()
+            mqttc.disconnect()
         detector.close()
         if not args.no_window:
             cv2.destroyAllWindows()

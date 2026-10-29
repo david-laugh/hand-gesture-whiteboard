@@ -1,2 +1,5 @@
 # Downloaded test assets (python -m tools.assets)
 tests/data/
+
+# Raw E2E recordings (curate with: python -m tools.recordings promote ...)
+recordings/
