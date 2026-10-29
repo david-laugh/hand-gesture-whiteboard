@@ -43,19 +43,29 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 | 손 모양 | 결과 | 비고 |
 |---|---|---|
 | 검지만 폄 | `DRAW_START` / `DRAW_MOVE` / `DRAW_END` | pointer = 검지 끝. START에 `params.color`, `params.brush_size`(px) |
-| 집게 (엄지 끝 4와 검지 끝 8을 붙임) | `ERASE_START` / `ERASE_MOVE` / `ERASE_END` | pointer = 4와 8의 중간점. START에 `params.eraser_radius`(정규화). 다른 포즈보다 먼저 검사 |
+| 다섯 손끝 모으기 | `ERASE_START` / `ERASE_MOVE` / `ERASE_END` | pointer = 손끝 4·8·12·16·20 평균. START에 `params.eraser_radius`(정규화) |
+| 엄지·검지 (집게 또는 L자, 나머지 세 손가락 접음) | `ZOOM_START` / `ZOOM_UPDATE` / `ZOOM_END` | `params.zoom_scale`, `params.zoom_center`. 벌리면 확대, 모으면 축소 |
 | 주먹 0.7초 | `UNDO` (1번) | pointer `null`. 획이 끝난 시점부터 잼 |
 | 브이 (검지 + 중지) 0.5초 | `IDLE` + `params.color` (1번) | 다음 펜 색. 세션별 순환, 이후 `DRAW_START`에 반영 |
 | 손바닥 (네 손가락) 0.5초 | `IDLE` + `params.brush_size` 또는 `params.eraser_radius` (1번) | 마지막으로 쓴 도구의 굵기 순환 (펜 4/8/16px, 지우개 지름 20/30/50px) |
 
-- **집게 판정**: dist(4,8) ÷ 손 크기. 진입 < `PINCH_ENTER_RATIO`(0.30), 지우는 중 유지 < `PINCH_EXIT_RATIO`(0.45).
-  두 값을 달리해서(히스테리시스) 경계에서 시작/끝이 떨리지 않는다.
-  주먹은 엄지가 접힌 검지 옆에 붙어 거리가 가까우므로, 검지가 `PINCH_INDEX_MIN_RATIO`(−0.15)보다 깊게 접혀 있으면 집게로 보지 않는다.
-- **그리기와 지우기는 동시에 되지 않는다.** 도구를 바꾸면 이전 도구의 `*_END`가 먼저 나가고 새 도구의 `*_START`가 나간다.
+- **주먹 vs 손끝 모으기**: 둘 다 네 손가락이 "접힘"으로 보인다. `tip_wrist` = 네 손끝(8,12,16,20) 평균 ~ 손목 거리 ÷ 손 크기로 구분.
+  - 주먹 < `FIST_TIP_WRIST_MAX`(1.18), 모으기 진입 > `ERASE_TIP_WRIST_ENTER`(1.20), 지우는 중 유지 > `ERASE_TIP_WRIST_EXIT`(1.15)
+  - 그 사이(1.18~1.20)는 포즈 없음 (현재 상태 유지)
+  - 녹화 rec03 기준: 주먹 0.78~1.16, 손끝 모으기 1.21~1.60. **손끝이 보이게** 모아야 한다 (손끝을 가리면 주먹처럼 보임)
+  - `tip_wrist`만 보면 그리기·브이·손바닥도 1.2를 넘으므로, 네 손가락이 접힘으로 보일 때만 이 값을 쓴다
+- **줌**: 세 손가락(중지·약지·새끼) 접힘 + 검지가 접히지 않음(`ZOOM_INDEX_MIN_RATIO` 0.0 초과) 상태에서
+  - 집게: dist(4,8) ÷ 손 크기 < `ZOOM_PINCH_RATIO`(0.20) / L자: 엄지 끝 ~ 검지 시작 마디(5) ÷ 손 크기 > `ZOOM_L_ENTER`(1.45), 이어지는 중에는 `ZOOM_L_EXIT`(1.30)까지
+  - 그리기(검지만)와 구분: rec01 그리기 중 엄지 거리 최대 1.37, 집게 거리 최소 0.28이라 그보다 바깥에 기준을 둠. 그리기 중에는 M프레임(5) 이상 L자가 이어져야 줌으로 바뀜
+  - N프레임 유지 → `ZOOM_START`. 줌 중에는 엄지 위치와 상관없이 세 손가락이 접혀 있으면 계속 `ZOOM_UPDATE`
+  - `zoom_scale` = 시작 배율 × 현재 dist(4,8) ÷ 시작 dist(4,8), `ZOOM_SCALE_MIN`~`MAX`(0.5~3). 거리는 `ZOOM_DIST_FLOOR`(0.25) 아래로 보지 않음 (집게에서 시작할 때 너무 민감하지 않게)
+  - `zoom_center` = 시작할 때 엄지·검지 중간점 (줌 동안 고정). 다른 포즈나 손 없음이 M프레임 → `ZOOM_END`. 그 배율이 세션의 현재 배율로 남는다
+  - **L자 기준은 실제 L자 녹화로 확인하지 않았다** (그리기 데이터로만 정함)
+- **그리기·지우기·줌은 동시에 되지 않는다.** 도구를 바꾸면 이전 도구의 `*_END`가 먼저 나가고 새 도구의 `*_START`가 나간다.
 - **일회성 명령** (주먹·브이·손바닥): 그리거나 지우는 중이 아닐 때만 나간다.
   - `COMMAND_HOLD_MS`(500) 동안 유지하면 1번 발행 → 같은 자세를 계속 유지하면 다시 나가지 않음 (자세를 바꿔야 재발행)
   - 명령 사이에는 `COMMAND_COOLDOWN_MS`(1000) 쿨다운
-  - 주먹(UNDO)은 `UNDO_HOLD_MS`(700) 유지. 획이 끝난 시점부터 새로 잰다 → **그리다 주먹으로 잠깐 접으면 UNDO가 나가지 않고**, 집게·검지에서 주먹으로 바꿔 0.7초 이상 유지하면 UNDO
+  - 주먹(UNDO)은 `UNDO_HOLD_MS`(700) 유지. 획이 끝난 시점부터 새로 잰다 → **그리다 주먹으로 잠깐 접으면 UNDO가 나가지 않고**, 모으기·검지에서 주먹으로 바꿔 0.7초 이상 유지하면 UNDO
 - **지우개 크기 변환**: canvas는 `eraser_radius × min(가로, 세로) × 2`를 지우개 지름(px)으로 쓴다 (1280×720 → 720).
   그래서 지름 30px → `eraser_radius = 30 / (2 × 720) ≈ 0.0208`. 캔버스 크기가 다르면 `CANVAS_MIN_SIDE_PX` 조정.
 - 펜 색·굵기 설정은 세션에 남는다. 끊김 감시가 획을 닫아도 유지되고, `SESSION_TTL_S`(600초) 동안 메시지가 없으면 세션과 함께 사라진다.
@@ -75,7 +85,7 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 
 - handedness는 쓰지 않는다. 손목(0)·검지 시작 마디(5)·새끼 시작 마디(17)의 **회전 방향(외적 부호)**만 본다.
   이 부호는 화면 안에서 손이 돌아가도 그대로이고, 번호가 좌우로 뒤집힐 때만 바뀐다.
-- 회전 방향이 `FLIP_NORMAL_SIGN`과 반대이고 **원래 번호로는 아무 포즈(집게·검지·브이·손바닥·주먹)도 안 나올 때만**,
+- 회전 방향이 `FLIP_NORMAL_SIGN`과 반대이고 **원래 번호로는 아무 포즈도 안 나올 때만**,
   검지↔새끼·중지↔약지 번호를 바꿔 모든 포즈를 다시 판별한다. 원래 번호로 이미 포즈가 나오면 건드리지 않는다.
 - 보정으로 나온 포즈의 pointer는 바뀐 번호 기준이다. 예: 그리기면 **원래 번호 20번 점(실제 검지 끝)**.
 - 보정이 적용된 프레임은 로그에 `"flip_fixed": true`로 표시된다.
@@ -118,8 +128,13 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 | `FINGER_EXTENDED_RATIO` | `0.15` | 손가락 "펴짐" 기준 |
 | `FLIP_FIX_ENABLED` | `true` | 손가락 번호 뒤집힘 보정 (아래 참고) |
 | `FLIP_NORMAL_SIGN` | `1` | 이 촬영 환경에서 정상인 회전 방향 (`1` 또는 `-1`, rec01 녹화 기준 `1`) |
-| `PINCH_ENTER_RATIO` / `PINCH_EXIT_RATIO` | `0.30` / `0.45` | 집게 진입 / 유지 기준 (dist(4,8) ÷ 손 크기) |
-| `PINCH_INDEX_MIN_RATIO` | `-0.15` | 검지가 이보다 깊게 접히면 집게 아님 (주먹 구분) |
+| `ERASE_TIP_WRIST_ENTER` / `ERASE_TIP_WRIST_EXIT` | `1.20` / `1.15` | 손끝 모으기(지우개) 진입 / 유지 |
+| `FIST_TIP_WRIST_MAX` | `1.18` | 이보다 작아야 주먹 |
+| `ZOOM_PINCH_RATIO` | `0.20` | 줌 집게 기준 (dist(4,8) ÷ 손 크기) |
+| `ZOOM_L_ENTER` / `ZOOM_L_EXIT` | `1.45` / `1.30` | 줌 L자 진입 / 유지 (엄지 끝 ~ 검지 시작 마디 ÷ 손 크기) |
+| `ZOOM_INDEX_MIN_RATIO` | `0.0` | 검지가 이보다 접히면 줌 아님 |
+| `ZOOM_SCALE_MIN` / `ZOOM_SCALE_MAX` | `0.5` / `3.0` | 배율 범위 |
+| `ZOOM_DIST_FLOOR` | `0.25` | 배율 계산 시 최소 거리 |
 | `COMMAND_HOLD_MS` / `COMMAND_COOLDOWN_MS` | `500` / `1000` | 브이·손바닥 유지 시간 / 명령 쿨다운 |
 | `UNDO_HOLD_MS` | `700` | 주먹(UNDO) 유지 시간 (획이 끝난 시점부터) |
 | `PEN_COLORS` | canvas 팔레트 8색 | 쉼표로 구분한 `#RRGGBB` 목록, 첫 번째가 기본색 |
