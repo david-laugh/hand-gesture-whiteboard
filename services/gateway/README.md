@@ -27,7 +27,13 @@ docker run --rm --name hgw-gateway --network hgw-net -p 8000:8000 \
   hand-gesture-gateway
 ```
 
-실행 후 `http://localhost:8000/`를 열고 **카메라 시작**을 누릅니다. 카메라 API는 `localhost` 또는 HTTPS에서만 사용할 수 있습니다. MQTT broker만 중지하고 싶다면 `docker stop hgw-mqtt`를 실행합니다.
+로컬 서버를 외부 휴대폰에서 열려면 별도의 HTTPS 주소가 필요합니다. Gateway를 실행한 상태에서 다음 명령으로 Cloudflare Tunnel을 시작합니다.
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+명령이 출력한 `https://…trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다. 페이지는 HTTPS일 때 자동으로 `wss://` WebSocket을 사용하므로 카메라 권한을 요청할 수 있습니다. Tunnel을 실행 중인 터미널을 종료하면 외부 주소도 닫힙니다. MQTT broker만 중지하고 싶다면 `docker stop hgw-mqtt`를 실행합니다.
 
 로컬 Python 실행도 가능합니다.
 

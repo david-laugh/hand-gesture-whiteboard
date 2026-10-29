@@ -2,13 +2,12 @@ const $ = id => document.getElementById(id);
 const capture = document.createElement('canvas');
 const ctx = capture.getContext('2d');
 let stream, socket, timer, running = false, generation = 0, frameId = 0;
-const captured = new Map();
 function stop(message = '중지됨') {
   running = false; generation++; clearTimeout(timer);
   stream?.getTracks().forEach(track => track.stop()); stream = null;
   if (socket) { socket.onclose = null; socket.close(); socket = null; }
   $('video').srcObject = null; $('start').disabled = false; $('stop').disabled = true;
-  captured.clear(); $('status').textContent = message;
+  $('status').textContent = message;
 }
 async function sendFrame(token) {
   if (!running || token !== generation) return;
@@ -27,12 +26,9 @@ async function sendFrame(token) {
       const metadata = new TextEncoder().encode(JSON.stringify({frame_id: id, captured_at_ms: capturedAt, width: capture.width, height: capture.height, jpeg_quality: 70, mirrored: true}));
       const packet = new Uint8Array(4 + metadata.length + jpeg.length);
       new DataView(packet.buffer).setUint32(0, metadata.length); packet.set(metadata, 4); packet.set(jpeg, 4 + metadata.length);
-      captured.set(id, capturedAt);
-      while (captured.size > 300) captured.delete(captured.keys().next().value);
       socket.send(packet);
-      $('metrics').textContent = `프레임 ${id} 전송 · ${capture.width}×${capture.height} · JPEG ${Math.round(jpeg.length / 1024)} KB`;
     }
-    if (running && token === generation) timer = setTimeout(() => sendFrame(token), 1000 / Number($('fps').value));
+    if (running && token === generation) timer = setTimeout(() => sendFrame(token), 50);
   } catch (error) { stop(error.message); }
 }
 $('start').onclick = async () => {
@@ -50,7 +46,7 @@ $('start').onclick = async () => {
       try {
         const message = JSON.parse(event.data);
         if (message.message_type === 'hello') {
-          running = true; $('stop').disabled = false; $('status').textContent = `연결됨 · ${message.session_id.slice(0,8)}`; sendFrame(token);
+          running = true; $('stop').disabled = false; $('status').textContent = '전송 중'; sendFrame(token);
         } else if (message.message_type === 'error') $('status').textContent = `${message.code}: ${message.message}`;
       } catch (error) { stop(error.message); }
     };
