@@ -1,0 +1,4 @@
+# dashboard — same pinned versions as services/vision (verified in python:3.11-slim)
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+paho-mqtt==2.1.0

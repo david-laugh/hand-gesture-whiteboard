@@ -1,0 +1,36 @@
+# Latency dashboard — a separate compose project so the root compose.yaml keeps its 4 services.
+#
+#   docker compose -f services/dashboard/compose.yaml up -d --build     (from the repository root)
+#   → http://localhost:8020/
+#
+# Joins the existing `hand-net` network (created by the root compose project) and only
+# subscribes to the pipeline's MQTT topics; it never publishes.
+name: hgw-dashboard
+
+services:
+  dashboard:
+    build:
+      context: .
+    image: hand-gesture-whiteboard/dashboard:dev
+    container_name: hgw-dashboard
+    restart: unless-stopped
+    init: true
+    environment:
+      MQTT_HOST: ${DASHBOARD_MQTT_HOST:-hgw-mqtt}
+      MQTT_PORT: ${DASHBOARD_MQTT_PORT:-1883}
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-hgw/v1}
+      VISION_METRICS_URL: ${DASHBOARD_VISION_METRICS_URL:-http://vision:8001/metrics}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "127.0.0.1:${DASHBOARD_HOST_PORT:-8020}:8004"
+    networks:
+      - hand-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8004/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+networks:
+  hand-net:
+    external: true
