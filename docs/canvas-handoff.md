@@ -1,5 +1,16 @@
 # Canvas 구현 인수인계
 
+## 다음 작업자용 현황 요약
+
+Canvas(D)는 Gesture(C)의 `hgw/v1/gestures/{session_id}` MQTT 입력을 받아 그림 상태를 만들고, renderer/Gateway가 소비하는 `hgw/v1/canvas/{session_id}` `CanvasMessage`를 QoS 0, retain false로 발행한다. 브라우저 실시간 화면은 `/ws/board?session_id=<id>`이며, 새 browser에도 살아 있는 session의 snapshot을 전달한다.
+
+1. **Canvas 크기와 상태**: 고정 논리 크기는 `1280×720`이다. browser 표시 크기와 무관하게 모든 stroke 좌표를 이 기준으로 저장·보간하므로, 같은 session을 여러 화면에서 열어도 위치가 달라지지 않는다. 상태는 session별 stroke, sequence, undo/redo, view이며 container 메모리에만 있다. container 재시작 시 그림은 사라진다.
+2. **그림 UI**: 펜 기본 굵기는 8px, 지우개 기본 굵기는 30px이고 서로 독립적으로 기억한다. 지우개는 클릭 한 번으로도 현재 원형 영역을 지우며, 점선 포인터 크기와 실제 지우개 폭이 같다. 펜은 팔레트·색상 맵·HEX(`#RRGGBB`) 입력을 제공하고 값은 MQTT `params.color`로 전달한다.
+3. **점 끊김 보강**: C는 One-Euro filter로 landmark pointer를 보강하고, D는 low-pass smoothing(`CANVAS_SMOOTHING=0.55`)과 최대 8px 간격의 선형 보간(`CANVAS_SEGMENT_PX=8`)을 추가 적용한다. 끊김이 보이면 먼저 C 발행 주기와 renderer의 전체 `points` 연결을 확인하고, 이후 보간 간격과 smoothing을 조정한다.
+4. **현재 전체 연동**: A Gateway → B Vision → C Gesture → D Canvas다. Vision은 MQTT `hgw/v1/landmarks/{session_id}` 또는 `ws://gesture:8002/ws/landmarks`로 C에 입력을 보내며, C는 현재 `IDLE`, `DRAW_START`, `DRAW_MOVE`, `DRAW_END`를 Canvas에 발행한다.
+5. **통합 주의사항**: Vision→Gesture의 MQTT와 WebSocket을 동시에 활성화하면 같은 frame이 중복 처리되어 stroke가 두 번 그려질 수 있다. 통합 실행에서는 한 경로만 사용한다. Vision `frame_id`는 latest-wins 처리로 중간 번호가 빠질 수 있고, `hands[].score`는 손 검출 confidence가 아닌 handedness 분류 점수다. 손 없음은 `hands: []`로 오며 C는 진행 중인 stroke를 끝내야 한다.
+6. **남은 작업**: C의 지우개·색상·굵기·줌·undo/redo pose/state machine, Gateway의 실제 QR/사용자 session ID 관리, Canvas 상태 영속화와 MQTT snapshot/replay, 운영용 broker TLS·ACL·Compose 구성이 필요하다.
+
 ## 구현 범위
 
 `services/canvas/`만 구현했다. Gateway, Vision, Gesture, `compose.yaml`, 공통 contract 파일은 변경하지 않았다.
