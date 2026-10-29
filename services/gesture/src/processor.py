@@ -40,7 +40,7 @@ def _pick_hand(msg: LandmarkMessage) -> tuple[Hand | None, int | None]:
 
 def build_gesture_message(ids: dict, result: StepResult, confidence: float,
                           hand_index: int | None, gesture_ms: float) -> dict:
-    params = {"state_frames": result.state_frames}
+    params = {"state_frames": result.state_frames, **result.params}
     if result.stroke_id is not None:
         params["stroke_id"] = result.stroke_id
     pointer = None if result.pointer is None else {"x": result.pointer[0], "y": result.pointer[1]}
@@ -68,8 +68,10 @@ class GestureProcessor:
         machine_factory: Callable[[], GestureStateMachine] = GestureStateMachine,
         clock: Callable[[], float] = time.monotonic,
         wall_ms: Callable[[], int] = now_ms,
+        session_ttl_s: float = config.SESSION_TTL_S,
     ):
         self.session_gap_ms = session_gap_ms
+        self.session_ttl_s = session_ttl_s
         self.lag_warn_ms = lag_warn_ms
         self._machine_factory = machine_factory
         self._clock = clock
@@ -146,8 +148,9 @@ class GestureProcessor:
                 result = s.machine.force_end()
                 if result is not None:
                     ended.append((s, result))
-                # 세션을 지워도 된다: 다음 메시지가 오면 새로 만들고, stroke_id는 프로세스 전체에서 겹치지 않는다.
-                del self._sessions[sid]
+                # 펜 색·굵기 설정을 지키기 위해 바로 지우지 않고, 아주 오래 조용한 세션만 지운다.
+                if now - s.last_seen > self.session_ttl_s:
+                    del self._sessions[sid]
         return [self._end_message(s, result, "gap_watch") for s, result in ended]
 
     def reset(self, session_id: str) -> None:
