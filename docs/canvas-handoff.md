@@ -17,6 +17,65 @@ A Gateway → B Vision → C Gesture → D Canvas
                    hgw/v1/canvas/{session_id}
 ```
 
+## A → B → C → D MQTT 통합 계획
+
+이 절은 전체 팀이 합의해야 할 **계획**이다. Canvas(D)의 현재 입력/출력 topic만 구현되어 있으며, A→B와 B→C topic은 해당 서비스 담당자가 contract를 확정한 후 구현한다. Canvas를 C로 부르지 않고 역할을 명확히 구분한다: **C는 Gesture command producer, D는 Canvas consumer/operation producer**다.
+
+| 순서 | 발행 서비스 → 구독 서비스 | 제안 topic | 전달 데이터 | 반드시 보장할 것 |
+| --- | --- | --- | --- | --- |
+| 1 | A Gateway → B Vision | `{prefix}/frames/{session_id}` | camera frame 참조 또는 JPEG, frame_id, timestamp_ms, trace_id | 같은 세션·프레임 식별자 전달, 대용량 frame 정책 합의 |
+| 2 | B Vision → C Gesture | `{prefix}/landmarks/{session_id}` | hand landmark 좌표, handedness, confidence, frame_id, timestamp_ms, trace_id | 좌표계·손 선택·낮은 confidence 처리 기준 합의 |
+| 3 | C Gesture → D Canvas | `{prefix}/gestures/{session_id}` | `GestureMessage`: gesture, normalized pointer, stroke_id, style | START/MOVE/END 순서, 0~1 pointer, session 일치 |
+| 4 | D Canvas → A/renderer | `{prefix}/canvas/{session_id}` | `CanvasMessage`: sequence, operations, history | operation 순서 적용, reconnect 복구 정책 |
+
+`{prefix}` 기본값은 `hgw/v1`이다. 1·2번 topic은 팀 제안이며 아직 Canvas 코드나 공통 contract에 고정하지 않았다. 이를 확정할 때도 `session_id`, `frame_id`, `timestamp_ms`, `trace_id`의 이름과 의미를 A부터 D까지 동일하게 유지한다.
+
+### 1. A(Gateway) → B(Vision): 카메라 입력 계획
+
+1. A는 QR 또는 연결 사용자마다 고유 `session_id`를 만든다. `default`는 로컬 테스트 전용이다.
+2. A는 각 frame에 증가하는 `frame_id`, 캡처 시각 `timestamp_ms`, 추적용 `trace_id`를 넣는다.
+3. JPEG를 MQTT payload에 직접 실을지, object URL/HTTP endpoint 참조만 실을지 먼저 결정한다. MQTT payload 상한과 broker 부하 때문에 고해상도 영상은 URL/스트림 참조 방식을 우선 검토한다.
+4. B는 최신 frame만 처리하는 drop policy를 둔다. 늦게 도착한 오래된 frame을 모두 처리하면 손 움직임과 그림이 지연된다.
+
+### 2. B(Vision) → C(Gesture): 좌표 계약과 보강 계획
+
+1. B는 선택한 손가락 tip의 좌표, 가능하면 손 전체 landmark, handedness, confidence를 C로 보낸다.
+2. 좌표계는 **이미지 폭/높이 기준 normalized 0~1**로 통일한다. C는 mirror된 사용자 미리보기인지 원본 카메라인지 한 번만 변환하고, 같은 축을 D까지 유지한다.
+3. B는 confidence가 낮거나 landmark가 없을 때 `pointer`를 억지로 이전 값으로 반복 발행하지 않는다. `hand_present: false` 또는 명확한 상태를 보내고 C가 현재 stroke를 안전하게 종료한다.
+4. C는 B의 `frame_id`와 timestamp를 보존해 지연·누락을 관측한다. 과거 frame은 버리고 새 frame을 우선하는 정책을 사용한다.
+
+### 3. C(Gesture): B 좌표를 연속된 그림 명령으로 변환하는 계획
+
+1. C는 B 좌표를 받아 dead zone, confidence threshold, 손가락 gesture 판정으로 펜/지우개/중지를 결정한다.
+2. draw 시작 때 `DRAW_START`, 이동 때 `DRAW_MOVE`, 손실·도구 전환·종료 때 반드시 `DRAW_END`를 보낸다. `stroke_id`는 한 선 전체에 동일해야 한다.
+3. 지우개는 `ERASE_START/MOVE/END`를 사용한다. 펜은 `params.color`(`#RRGGBB`), `params.brush_size`(px), 지우개는 `params.eraser_radius`를 함께 보낸다.
+4. C의 첫 보강 단계는 exponential moving average(EMA) 또는 median filter로 landmark jitter를 줄이는 것이다. 너무 강한 filter는 그림이 손보다 늦게 따라오므로 실제 카메라 FPS에서 조정한다.
+5. C는 이전 좌표와의 거리·시간을 함께 판단한다. 갑자기 멀리 튄 좌표는 outlier로 버리고, 일정 시간 landmark가 없으면 stroke를 종료한다.
+
+### 4. D(Canvas): 점 끊김을 줄이는 현재 보강과 후속 계획
+
+Canvas는 C의 `DRAW_MOVE`/`ERASE_MOVE`에 이미 두 단계 보강을 적용한다.
+
+1. **Low-pass smoothing**: 이전 Canvas 점과 새 점을 `CANVAS_SMOOTHING`(기본 `0.55`) 비율로 섞어 landmark 흔들림을 완화한다.
+2. **Linear interpolation**: 두 점 사이 거리가 `CANVAS_SEGMENT_PX`(기본 `8px`)보다 크면 중간 점을 생성한다. renderer는 `stroke_append.points`의 모든 점을 이어 그려야 한다.
+3. **고정 논리 Canvas**: 1280×720 좌표계로 환산한 뒤 보간하므로 browser 화면 크기가 달라도 같은 stroke가 나온다.
+
+점이 뚝뚝 끊기는 문제가 남으면 아래 순서로 조정한다.
+
+1. B/C가 `DRAW_MOVE`를 충분한 주기(실측 카메라 FPS 기준)로 발행하는지 먼저 확인한다.
+2. renderer가 `points` 배열의 첫 점과 마지막 점만 그리지 않고, 배열 전체를 순서대로 연결하는지 확인한다.
+3. `CANVAS_SEGMENT_PX`를 더 작은 값으로 낮춰 중간 점을 늘린다. 너무 작으면 MQTT payload와 CPU가 늘어난다.
+4. `CANVAS_SMOOTHING`을 낮춰 더 부드럽게 하되, 사용자가 느끼는 지연을 측정한다.
+5. B/C의 outlier 제거와 Canvas 보간을 함께 조정한다. Canvas만 과도하게 smoothing하면 빠른 손 이동이 뒤처진다.
+
+### 단계별 통합 검증 계획
+
+1. C 없이 Canvas UI로 펜/지우개를 그려 D의 MQTT 입력·output·renderer 경로를 검증한다.
+2. `mosquitto_pub`로 고정된 `GestureMessage`를 C→D topic에 넣어 schema, session 분리, 보간 점 수를 검증한다.
+3. B의 녹화 landmark를 C에 입력해 gesture 전환, 좌표 범위, stroke 종료를 검증한다.
+4. A의 실제 카메라에서 A→B→C→D trace_id/frame_id를 로그로 추적하고, 손을 빠르게 움직일 때 끊김·지연·튀는 선을 측정한다.
+5. 두 개 session을 동시에 실행해 topic과 화면이 섞이지 않는지 확인한 뒤, reconnect·broker 재시작 시 유실 정책을 확정한다.
+
 ## MQTT 계약
 
 Canvas가 구독하는 topic은 `{MQTT_TOPIC_PREFIX}/gestures/+`이며 기본값은 `hgw/v1/gestures/+`다. C는 세션마다 다음 topic으로 `GestureMessage` JSON을 발행해야 한다.
