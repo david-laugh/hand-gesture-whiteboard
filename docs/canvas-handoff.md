@@ -102,13 +102,56 @@ PYTHONPATH=services/canvas python -m unittest discover -s services/canvas/tests 
 - Draw move 보간 점 생성
 - Undo/redo operation 생성
 
-## 다음 담당자가 연결할 부분
+## 다음 담당자에게 맡길 작업
 
-1. Gesture 서비스가 `hgw/v1/gestures/{session_id}`에 schema-valid `GestureMessage`를 발행한다.
-2. Gateway 또는 browser renderer가 `hgw/v1/canvas/{session_id}`를 구독하고 `CanvasMessage.operations`를 렌더링한다.
-   Canvas 자체 그림판은 이미 `/ws/board`로 동일 operation을 렌더링하므로, C 연동 전에도 펜/지우개 UI로 MQTT 경로를 시험할 수 있다.
-3. 전체 MQTT 구성은 별도 승인 후 `compose.yaml`에 broker, Canvas command, topic 환경 변수를 추가한다.
-4. 다중 Canvas replica가 필요하면 session affinity나 외부 session store가 필요하다. 현재 상태는 container 메모리에 있다.
+아래 순서대로 진행하면 A → B → C → D 통합을 가장 적은 변경으로 검증할 수 있다. **Canvas 담당자가 아닌 서비스의 파일은 이 문서만으로 수정하지 말고, 해당 서비스 담당자와 계약을 확인한 후 변경한다.**
+
+1. **B(Vision) → C(Gesture) 입력 계약을 확정한다.**
+   - B는 session별 hand landmark, handedness, confidence, frame timestamp를 C가 읽을 수 있는 형식으로 전달한다.
+   - B→C의 MQTT topic 또는 IPC 방식은 아직 정해지지 않았다. Canvas topic을 재사용하지 않는다.
+   - C가 jitter를 줄일 filtering 주기와 gesture 판정 임계값을 이 단계에서 합의한다.
+
+2. **C(Gesture)에 Canvas용 command publisher를 구현한다.**
+   - B의 landmark를 `DRAW_*`, `ERASE_*`, `UNDO`, `REDO`, `CLEAR`로 판정한다.
+   - session별 `hgw/v1/gestures/{session_id}`에 schema-valid `GestureMessage`를 QoS 0, retain false로 발행한다.
+   - `pointer.x/y`는 반드시 0~1 normalized 값, topic suffix와 payload `session_id`는 반드시 같은 값으로 만든다.
+   - 한 선은 같은 `stroke_id`를 이용해 `*_START → *_MOVE... → *_END`로 발행하고, `frame_id`는 session 안에서 증가시킨다.
+
+3. **A(Gateway)가 QR/접속 사용자와 `session_id`를 하나로 고정한다.**
+   - A→B→C→D 전체에서 동일 session ID를 전달한다. URL `?session_id=default`는 개발 편의용 기본 session일 뿐, 실제 사용자 식별자로 쓰지 않는다.
+   - 다른 사용자의 topic/payload가 섞이지 않도록 session 생성·만료 정책을 정한다.
+   - Gateway에서 Canvas output을 화면으로 중계한다면 `{prefix}/canvas/{session_id}`만 구독하고, `sequence`가 과거/중복인 operation은 적용하지 않는다.
+
+4. **통합 화면 또는 renderer를 검증한다.**
+   - Canvas 내장 화면은 `/ws/board?session_id=<id>`로 snapshot과 실시간 operation을 이미 제공한다.
+   - 별도 renderer는 `stroke_append.points` 전체를 순서대로 연결하고 erase는 `destination-out` 방식으로 구현한다.
+   - MQTT 전용 renderer에는 snapshot/replay topic이 아직 없으므로, 재접속 시 WebSocket snapshot을 쓰거나 replay 계약을 추가로 설계한다.
+
+5. **Infra/Platform이 MQTT broker와 배포 구성을 운영용으로 바꾼다.**
+   - 별도 승인 후 `compose.yaml`에 broker, Canvas 실행 환경 변수, healthcheck, restart policy를 추가한다.
+   - 개발용 `mosquitto-no-auth.conf` 대신 TLS·계정·ACL을 설정한다. 외부 tunnel에는 broker 포트 `1883/11883`을 노출하지 않는다.
+   - ACL은 C/제어 UI의 gesture publish와 Gateway/renderer의 canvas subscribe를 session 단위 최소 권한으로 제한한다.
+
+6. **Canvas 후속 개선의 우선순위를 결정한다.**
+   - 현재 Canvas 상태는 container 메모리이므로 재시작하면 그림이 사라진다. 지속성이 필요하면 Redis/DB와 session affinity를 설계한다.
+   - malformed payload, 처리 지연, MQTT reconnect를 metrics/log로 수집한다.
+   - `REDO`는 engine이 `restore_stroke` operation을 내보내지만 현재 내장 browser renderer는 이를 복원하지 않는다. UI에서 redo를 제공할 경우 stroke replay 정보와 renderer 처리를 함께 보완한다.
+
+## 다른 서비스 담당자에게 반드시 전달할 사항
+
+1. **Canvas는 JPEG, QR 영상, raw hand landmark를 받지 않는다.** C가 gesture 명령과 normalized pointer로 변환한 뒤 MQTT로 보내야 한다.
+2. **고정 Canvas 좌표는 1280×720이다.** `pointer`는 화면 pixel이 아닌 0~1 값이며 Canvas가 pixel로 환산한다. B/C가 browser 크기를 기준으로 px 값을 그대로 보내면 선 위치가 어긋난다.
+3. **입력/출력 topic은 아래 두 개다.** prefix 기본값은 `hgw/v1`이며 session suffix를 임의로 바꾸면 안 된다.
+
+   ```text
+   C → D: hgw/v1/gestures/{session_id}
+   D → Gateway/renderer: hgw/v1/canvas/{session_id}
+   ```
+
+4. **QoS 0, retain false는 유실 가능성을 뜻한다.** Canvas는 중복 제거·메시지 저장·재전송을 보장하지 않는다. C/Gateway는 `trace_id`, `frame_id`, `stroke_id`, output `sequence`를 로그와 중복 방지에 사용한다.
+5. **펜 설정은 `params.color`(`#RRGGBB`)와 `params.brush_size`(px)다.** 지우개는 `params.eraser_radius`를 사용하며, 원하는 px 폭을 맞추려면 `폭_px / (2 × min(CANVAS_WIDTH, CANVAS_HEIGHT))`로 계산한다.
+6. **같은 session ID의 browser는 그림을 공유한다.** URL에 session ID가 없으면 `default`가 사용된다. 테스트는 `?session_id=team-a`처럼 별도 ID를 사용해 서로 섞이지 않는지 확인한다.
+7. **Canvas 재시작은 현재 그림을 지운다.** `/ws/board` snapshot은 살아 있는 Canvas process의 메모리 상태만 복원한다.
 
 ## 후속 개발 범위와 결정 필요 사항
 
