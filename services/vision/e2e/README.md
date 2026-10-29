@@ -1,11 +1,13 @@
-# Vision E2E 테스트 환경 (운영 경로)
+# 전체 파이프라인 E2E 테스트 환경 (운영 경로)
 
-실제 카메라 → **Gateway → MQTT → Vision** → Gesture 자리의 **recorder**로 이어지는 운영 경로를 계속 띄워 두는 테스트 환경이다.
-Gateway나 Vision이 업데이트되면 같은 명령으로 다시 띄워 회귀 테스트를 하고, 실제 손동작 데이터를 녹화해 Gesture 담당자에게 넘긴다.
+실제 카메라 → **Gateway → Vision → Gesture → Canvas**를 모두 실제 코드로 MQTT로 연결해 띄워 두는 테스트 환경이다.
+어느 서비스가 업데이트되든 같은 명령으로 다시 띄워 휴대폰으로 그려 보고, 실제 손동작 데이터를 녹화한다.
 
 ```text
-휴대폰/노트북 카메라 ─► gateway /cam (localhost:8010) ─► MQTT hgw/v1/frames/+ ─► vision ─► MQTT hgw/v1/landmarks/+ ─► gesture-recorder ─► services/vision/recordings/*.jsonl
-                                                                                                              └─► (실제 gesture 서비스도 같은 topic을 구독)
+휴대폰/노트북 카메라 ─► gateway /cam (localhost:8010)
+   ─MQTT hgw/v1/frames/+─► vision ─MQTT hgw/v1/landmarks/+─► gesture ─MQTT hgw/v1/gestures/+─► canvas (localhost:8013)
+                                              ├─► canvas (손 뼈대 + 촬영 세션 감지)
+                                              └─► gesture-recorder ─► services/vision/recordings/*.jsonl
 ```
 
 | 서비스 | 컨테이너 | 역할 |
@@ -14,7 +16,8 @@ Gateway나 Vision이 업데이트되면 같은 명령으로 다시 띄워 회귀
 | vision | `hgw-vision` | 내 서비스. frames 구독 → 추론 → `hgw/v1/landmarks/{session_id}` 발행 |
 | mqtt | `hgw-e2e-mqtt` (alias `hgw-mqtt`) | **테스트 전용** mosquitto. host `127.0.0.1:11883` |
 | gesture-recorder | `hgw-e2e-gesture-recorder` | **테스트 전용**. C와 똑같이 `hgw/v1/landmarks/+`를 구독해 계약(topic↔session_id 포함)을 검증하고 session별로 녹화 |
-| gesture, canvas | `hgw-gesture`, `hgw-canvas` | 루트 compose 그대로 (현재 placeholder) |
+| gesture | `hgw-gesture` | **팀원 코드 그대로** (Dockerfile CMD). `hgw/v1/landmarks/+` 구독 → `hgw/v1/gestures/{session_id}` 발행. WebSocket 입력은 끔 |
+| canvas | `hgw-canvas` | **팀원 코드 그대로** (Dockerfile CMD). host `127.0.0.1:8013`. 그림판 `/`(최신 촬영 세션 자동 추적), 갤러리 `/gallery`. 그림은 `services/canvas/drawings/`에 자동 저장(git 제외), 파일 시각은 `TZ=Asia/Seoul` |
 
 - 설정 파일: [`compose.e2e.yaml`](compose.e2e.yaml). 루트 `compose.yaml` **위에 덮어쓰는** override라서 팀원 파일은 수정하지 않는다.
 - Host 8000은 다른 프로젝트가 쓰고 있어서 gateway를 **8010**에 연다. 변경: `E2E_GATEWAY_HOST_PORT=8020`.
@@ -30,18 +33,20 @@ docker compose -f compose.yaml -f services/vision/e2e/compose.e2e.yaml up -d --b
 # 상태
 docker compose -f compose.yaml -f services/vision/e2e/compose.e2e.yaml ps
 curl http://127.0.0.1:8010/healthz                       # gateway: mqtt_connected true
+curl http://127.0.0.1:8013/healthz                       # canvas: mqtt_connected true, live_session (촬영 중인 세션)
 docker compose exec vision python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/healthz').read().decode())"
 #   → mqtt_connected true, landmarks_topic hgw/v1/landmarks/{session_id}
 
 # 실시간 로그
 docker logs -f hgw-e2e-gesture-recorder                  # 30프레임마다: 손 검출 비율, frame_id gap, fps, 녹화 파일
+docker compose logs -f gesture                           # 프레임별 gesture 판정 (JSON 로그)
 docker compose logs -f vision
 
 # 종료 (테스트 전용 서비스까지 정리)
 docker compose -f compose.yaml -f services/vision/e2e/compose.e2e.yaml down
 ```
 
-> override 없이 `docker compose up -d`만 실행하면 원래 구성으로 돌아간다 (gateway는 placeholder, 브로커와 recorder 없음).
+> override 없이 `docker compose up -d`만 실행하면 원래 구성으로 돌아간다 (gateway·gesture·canvas는 placeholder, 브로커와 recorder 없음).
 > 매번 `-f`를 쓰기 번거로우면 PowerShell `$env:COMPOSE_FILE="compose.yaml;services/vision/e2e/compose.e2e.yaml"`, bash `export COMPOSE_FILE=compose.yaml:services/vision/e2e/compose.e2e.yaml`.
 
 ## 2. 카메라 연결
@@ -56,6 +61,16 @@ cloudflared tunnel --url http://localhost:8010
 
 출력된 `https://…trycloudflare.com` 주소를 휴대폰에서 열거나, 그 주소로 연 대시보드의 QR을 스캔한다. 터미널을 닫으면 터널도 닫힌다.
 ⚠️ 터널이 열려 있는 동안 이 주소는 **인터넷에 공개**된다. 테스트할 때만 열어 둔다.
+
+**그림 확인 (노트북):** `http://localhost:8013/`을 열어 둔다. `session_id` 없이 열면 canvas가 **가장 최근 촬영 세션을 자동으로 따라간다** (촬영 시작마다 새 빈 그림판으로 바뀜). 손 뼈대도 같이 표시된다.
+- 촬영을 멈추고 5초(`CANVAS_SESSION_IDLE_SEC`)가 지나면 그 세션 그림이 `services/canvas/drawings/`에 PNG로 저장되고 `http://localhost:8013/gallery`에 나온다.
+- 특정 세션만 고정해서 보려면 `http://localhost:8013/?session_id=<id>` (recorder 로그에 세션마다 링크가 찍힌다).
+
+카메라 없이 gesture → canvas만 확인하려면 녹화를 재생한다 (`services/vision`에서):
+
+```bash
+python -m tools.replay_landmarks recordings/<file>.jsonl --rebase-ts --session-id replay-test
+```
 
 ## 3. 녹화 → Gesture 담당자에게 전달
 

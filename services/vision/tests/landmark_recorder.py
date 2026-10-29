@@ -64,7 +64,11 @@ class LandmarkRecorder:
         save_dir: str | None = None,
         print_every: int = 1,
         keep_messages: bool = True,
+        canvas_url: str | None = None,
     ) -> None:
+        # The gateway issues a new session_id per camera take and does not display it; print the
+        # matching canvas board link so the take can be watched (canvas shows ?session_id=… only).
+        self.canvas_url = canvas_url.rstrip("/") if canvas_url else None
         self.host = host
         self.port = port
         self.prefix = prefix.strip("/")
@@ -121,6 +125,8 @@ class LandmarkRecorder:
                 self.save_dir.mkdir(parents=True, exist_ok=True)
                 path = self.save_dir / f"{time.strftime('%Y%m%d-%H%M%S')}_{session_id[:8]}.jsonl"
                 print(f"[recorder] new session {session_id} → recording {path}", flush=True)
+            if self.canvas_url:
+                print(f"[recorder] canvas for this take: {self.canvas_url}/?session_id={session_id}", flush=True)
             stats = self.sessions[session_id] = _SessionStats(path)
         return stats
 
@@ -159,9 +165,10 @@ def main() -> None:
     parser.add_argument("--prefix", default="hgw/v1")
     parser.add_argument("--save-dir", help="record one JSON Lines file per session_id into this directory")
     parser.add_argument("--print-every", type=int, default=1, help="print one line every N messages per session")
+    parser.add_argument("--canvas-url", help="print <canvas-url>/?session_id=<id> for each new session")
     args = parser.parse_args()
     recorder = LandmarkRecorder(args.host, args.port, prefix=args.prefix, verbose=True, save_dir=args.save_dir,
-                                print_every=args.print_every, keep_messages=False)
+                                print_every=args.print_every, keep_messages=False, canvas_url=args.canvas_url)
     recorder._client.connect_async(args.host, args.port, 30)
     print(f"[recorder] waiting for broker {args.host}:{args.port} (topic {recorder.topic})", flush=True)
     try:

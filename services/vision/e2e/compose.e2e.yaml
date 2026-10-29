@@ -1,21 +1,23 @@
-# Vision E2E test environment (operational path) — layered on top of the root compose.yaml.
+# Full-pipeline E2E test environment (operational path) — layered on top of the root compose.yaml.
 #
-#   Phone/laptop camera ─► gateway (/cam) ─► MQTT hgw/v1/frames/+ ─► vision ─► MQTT hgw/v1/landmarks/+ ─► gesture-recorder
+#   Phone/laptop camera ─► gateway (/cam) ─MQTT frames─► vision ─MQTT landmarks─► gesture ─MQTT gestures─► canvas (board)
+#                                                                         └─► gesture-recorder (records + prints canvas link)
 #
 # Run from the repository root:
 #   docker compose -f compose.yaml -f services/vision/e2e/compose.e2e.yaml up -d --build
 #
-# - Does not modify any team member's files. The gateway runs its own code from
-#   services/gateway (bind mount) with the CMD from its Dockerfile.
+# - Does not modify any team member's files. gateway, gesture and canvas run their own code
+#   (bind mount from the root compose) with the CMD from their own Dockerfile; this file only
+#   supplies runtime settings (broker address, host ports).
 # - mqtt and gesture-recorder are TEST-ONLY services that exist only in this file;
 #   the root compose.yaml still defines exactly 4 containers.
-# - gesture-recorder subscribes to hgw/v1/landmarks/+ exactly like Container C will. It
-#   validates every vision message and records one JSON Lines file per camera session into
-#   services/vision/recordings/ (git-ignored). It runs alongside the real gesture service.
+# - gesture-recorder subscribes to hgw/v1/landmarks/+ like gesture does. It validates every
+#   vision message, records one JSON Lines file per camera session into
+#   services/vision/recordings/ (git-ignored) and prints the canvas link for each new session.
 
 services:
   gateway:
-    command: !reset null            # use services/gateway/Dockerfile CMD (uvicorn, gateway owner's choice)
+    command: !reset null            # use services/gateway/Dockerfile CMD
     environment:
       MQTT_HOST: hgw-mqtt
       MQTT_PORT: "1883"
@@ -30,6 +32,34 @@ services:
     environment:
       MQTT_HOST: hgw-mqtt
       MQTT_PORT: "1883"
+    depends_on:
+      - mqtt
+
+  gesture:
+    command: !reset null            # use services/gesture/Dockerfile CMD
+    environment:
+      MQTT_HOST: hgw-mqtt
+      MQTT_PORT: "1883"
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-hgw/v1}
+      # Vision publishes over MQTT only; keep gesture's WebSocket input off (also gesture's
+      # default since PR #7) so a frame can never be processed twice.
+      MQTT_INPUT_ENABLED: "true"
+      WS_INPUT_ENABLED: "false"
+    depends_on:
+      - mqtt
+
+  canvas:
+    command: !reset null            # use services/canvas/Dockerfile CMD
+    environment:
+      MQTT_HOST: hgw-mqtt
+      MQTT_PORT: "1883"
+      MQTT_TOPIC_PREFIX: ${MQTT_TOPIC_PREFIX:-hgw/v1}
+      # Saved drawing file names use the container clock; default UTC would be 9 h behind KST.
+      TZ: ${E2E_TZ:-Asia/Seoul}
+      # Drawings are saved to /app/drawings = services/canvas/drawings on the host (git-ignored).
+    ports:
+      # board (auto-follows the latest camera session): http://localhost:8013/   gallery: /gallery
+      - "127.0.0.1:${E2E_CANVAS_HOST_PORT:-8013}:8003"
     depends_on:
       - mqtt
 
@@ -48,7 +78,8 @@ services:
     image: hand-gesture-whiteboard/vision:dev
     container_name: hgw-e2e-gesture-recorder
     command: ["python", "-m", "tests.landmark_recorder", "--host", "hgw-mqtt", "--port", "1883",
-              "--prefix", "${MQTT_TOPIC_PREFIX:-hgw/v1}", "--save-dir", "/app/recordings", "--print-every", "30"]
+              "--prefix", "${MQTT_TOPIC_PREFIX:-hgw/v1}", "--save-dir", "/app/recordings", "--print-every", "30",
+              "--canvas-url", "http://localhost:${E2E_CANVAS_HOST_PORT:-8013}"]
     working_dir: /app
     restart: unless-stopped
     init: true

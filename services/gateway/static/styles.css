@@ -10,5 +10,6 @@ button, select { font: inherit; border-radius: 6px; }
 select { padding: 6px 8px; color: inherit; background: #2b3439; border: 1px solid #3a4448; }
 button { padding: 14px; border: 0; background: #c98a3c; color: #1d2326; font-weight: 700; }
 button.stop { background: #3a4448; color: #e8e4da; }
-#status, #message { margin: 0; font-size: 14px; }
+#status, #message, #orientation { margin: 0; font-size: 14px; }
+#orientation { color: #b6c0c3; }
 .on { color: #5fae82; } .off, #message { color: #e0644d; }
