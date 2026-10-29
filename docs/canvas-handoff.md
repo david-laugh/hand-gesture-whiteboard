@@ -11,6 +11,7 @@ Canvas(D)는 Gesture(C)의 `hgw/v1/gestures/{session_id}` MQTT 입력을 받아 
 5. **통합 주의사항**: Vision→Gesture의 MQTT와 WebSocket을 동시에 활성화하면 같은 frame이 중복 처리되어 stroke가 두 번 그려질 수 있다. 통합 실행에서는 한 경로만 사용한다. Vision `frame_id`는 latest-wins 처리로 중간 번호가 빠질 수 있고, `hands[].score`는 손 검출 confidence가 아닌 handedness 분류 점수다. 손 없음은 `hands: []`로 오며 C는 진행 중인 stroke를 끝내야 한다.
 6. **남은 작업**: C의 지우개·색상·굵기·줌·undo/redo pose/state machine, Gateway의 실제 QR/사용자 session ID 관리, Canvas 상태 영속화와 MQTT snapshot/replay, 운영용 broker TLS·ACL·Compose 구성이 필요하다.
 7. **촬영 세션 자동 전환·저장과 손 뼈대 (추가)**: D는 그림과 무관하게 `hgw/v1/landmarks/+`도 구독한다. 처음 보는 session의 landmarks가 오면 촬영 시작으로 보고 자동 모드 그림판(`http://localhost:8003/`, `session_id` 없음)을 그 세션의 빈 캔버스로 바꾸며 이전 세션 그림을 PNG로 저장한다. landmarks가 `CANVAS_SESSION_IDLE_SEC`(기본 5초) 끊기면 촬영 종료로 보고 저장한다. 저장 폴더는 `CANVAS_SAVE_DIR`(기본 `services/canvas/drawings`)이고, `/gallery`에서 저장된 그림을 썸네일 세로 목록으로 보며(맨 위는 촬영 중 세션), 데이터는 `/v1/drawings`다. 같은 landmarks를 0~1 `[x, y]` 21점으로 줄여 `/ws/board`로 보내 그림 위에 손 뼈대를 그린다. Vision이 MQTT 대신 WebSocket으로만 C에 보내는 실행에서는 landmarks topic이 비므로 뼈대가 보이지 않고, 세션 감지는 C의 gesture 메시지로 대신한다. 카메라 비율은 계약에 프레임 크기가 없어 D에서 보정하지 않으며 시연은 가로 촬영으로 한다.
+8. **제스처 색·굵기 → 팔레트 동기화 (추가)**: C가 브이·손바닥 인식 직후 `IDLE`의 `params`(color, brush_size, eraser_radius)와 `DRAW_START`/`ERASE_START`의 `params`로 보내는 값이 바뀌면, D가 `/ws/board`에 `tool` 메시지를 보내 그림판 팔레트와 굵기 슬라이더를 같은 값으로 바꾼다.
 
 ## 구현 범위
 

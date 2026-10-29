@@ -155,6 +155,10 @@ Gateway는 폰에서 **촬영 시작**을 누를 때마다 새 `session_id`를 �
 
 주의: 폰 화면(`services/gateway/static/app.js`)은 연결이 끊기면 자동 재연결하고, Gateway는 연결마다 새 세션 ID를 만듭니다. 촬영 중 네트워크가 끊기면 그림이 두 세션(두 파일)으로 나뉠 수 있습니다.
 
+## 제스처 색·굵기를 팔레트에 반영
+
+Gesture는 브이(펜 색 변경)나 손바닥(굵기 변경)을 인식한 순간 `IDLE` 메시지의 `params.color`, `params.brush_size`, `params.eraser_radius`에 바뀐 값을 싣고, `DRAW_START`/`ERASE_START`에도 현재 값을 싣습니다. Canvas는 이 값이 바뀔 때마다 `/ws/board`로 `{"type": "tool", "color", "brush_size", "eraser_size"}`를 보내고, 그림판은 팔레트 선택·HEX·펜/지우개 굵기 슬라이더를 같은 값으로 바꿉니다. 그래서 선을 긋기 전에도 바뀐 색이 보이고, 이후 마우스로 그려도 같은 값을 씁니다. `eraser_size`는 `eraser_radius × min(가로, 세로) × 2`로 환산한 px입니다. 그림판을 나중에 열어도 그 세션의 마지막 값이 전달됩니다. 마우스 UI에서 바꾼 값은 그 브라우저에만 적용되고 서버가 다시 보내지 않습니다.
+
 ## 손 뼈대 레이어
 
 Canvas는 `hgw/v1/landmarks/+`를 구독해 손 21개 점을 `[x, y]`(0~1)로 줄여 `/ws/board`로 보내고, 그림판은 그림 위 별도 투명 canvas에 뼈대를 그립니다(검지 끝 8번은 빨간 점). 좌표는 Gesture의 `pointer`와 같은 이미지 기준 0~1이고 Gesture가 x를 반전하지 않으므로 선 위치와 맞습니다. Vision 형식(`[[x, y, z], …]`)과 공통 계약 형식(`[{"id", "x", "y", "z"}, …]`)을 모두 받습니다. 손이 없거나 0.5초 동안 landmarks가 오지 않으면 뼈대를 지웁니다.

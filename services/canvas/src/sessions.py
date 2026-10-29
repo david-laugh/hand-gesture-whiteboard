@@ -90,6 +90,31 @@ def render_png(engine, session_id, width, height):
     return output.getvalue()
 
 
+HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
+
+
+def tool_update(params, width, height):
+    """Pick the pen/eraser settings out of GestureMessage params for the board palette and sliders.
+
+    Gesture sends them on DRAW_START / ERASE_START and on the IDLE message right after a V-sign or
+    palm command. The eraser radius is normalized, so it is converted back to a pixel width with the
+    same formula the engine uses (radius x min(width, height) x 2).
+    """
+    if not isinstance(params, dict):
+        return {}
+    update = {}
+    color = params.get("color")
+    if isinstance(color, str) and HEX_COLOR.match(color):
+        update["color"] = color.upper()
+    size = params.get("brush_size")
+    if isinstance(size, (int, float)) and not isinstance(size, bool) and 0 < size <= 200:
+        update["brush_size"] = round(float(size), 1)
+    radius = params.get("eraser_radius")
+    if isinstance(radius, (int, float)) and not isinstance(radius, bool) and 0 < radius <= 1:
+        update["eraser_size"] = round(radius * min(width, height) * 2, 1)
+    return update
+
+
 def has_visible_strokes(engine, session_id):
     state = engine.sessions.get(session_id)
     return bool(state) and any(stroke.visible and stroke.points for stroke in state.strokes.values())

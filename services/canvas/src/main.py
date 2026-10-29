@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .engine import CanvasEngine
-from .sessions import SessionTracker, has_visible_strokes, normalise_hands, render_png, save_drawing
+from .sessions import SessionTracker, has_visible_strokes, normalise_hands, render_png, save_drawing, tool_update
 
 ROOT = Path(__file__).resolve().parent.parent
 log = logging.getLogger("canvas")
@@ -46,6 +46,7 @@ def create_app(settings=None):
     control_frames = {}
     control_traces = deque(maxlen=2048)  # trace ids published by the mouse UI: not camera activity
     saved_files = {}
+    tool_states = {}      # session_id -> last pen color / sizes chosen by gestures
     settings.save_dir.mkdir(parents=True, exist_ok=True)
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"canvas-{os.urandom(4).hex()}")
 
@@ -91,6 +92,13 @@ def create_app(settings=None):
         if await send(viewer, {"type": "session", "session_id": session_id, "auto": viewer in auto_viewers,
                                "live": tracker.active(session_id), "saved": saved_files.get(session_id)}):
             await send(viewer, snapshot(session_id))
+            if tool_states.get(session_id):
+                await send(viewer, {"type": "tool", "session_id": session_id, **tool_states[session_id]})
+
+    async def broadcast_tool(session_id, update):
+        for viewer, shown in tuple(viewers.items()):
+            if shown == session_id:
+                await send(viewer, {"type": "tool", "session_id": session_id, **update})
 
     async def on_activity(session_id):
         change = tracker.touch(session_id)
@@ -148,6 +156,11 @@ def create_app(settings=None):
         mqtt_client.publish(f"{settings.prefix}/canvas/{result['session_id']}", json.dumps(result, separators=(",", ":")), qos=0, retain=False)
         if gesture.get("trace_id") not in control_traces:
             schedule(on_activity(result["session_id"]))
+            # Mouse UI changes are already on that browser's palette; only gesture choices are pushed.
+            update = tool_update(gesture.get("params"), settings.width, settings.height)
+            if update and tool_states.get(result["session_id"], {}) | update != tool_states.get(result["session_id"]):
+                tool_states.setdefault(result["session_id"], {}).update(update)
+                schedule(broadcast_tool(result["session_id"], update))
         schedule(broadcast(result))
 
     def on_message(mqtt_client, userdata, message):

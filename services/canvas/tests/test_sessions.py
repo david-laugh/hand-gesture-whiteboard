@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 
 from src.engine import CanvasEngine
-from src.sessions import SessionTracker, drawing_filename, normalise_hands, save_drawing
+from src.sessions import SessionTracker, drawing_filename, normalise_hands, save_drawing, tool_update
 
 
 def gesture(command, frame_id, pointer=None, session="cam-a", **params):
@@ -95,6 +95,19 @@ class SaveDrawingTests(unittest.TestCase):
     def test_filename_strips_unsafe_characters(self):
         self.assertTrue(drawing_filename("../../etc", 0).endswith("_etc.png"))
         self.assertTrue(drawing_filename("0123456789abcdef", 0).endswith("_01234567.png"))
+
+
+class ToolUpdateTests(unittest.TestCase):
+    def test_gesture_color_and_sizes_become_palette_values(self):
+        update = tool_update({"state_frames": 3, "color": "#dc2626", "brush_size": 16}, 1280, 720)
+        self.assertEqual(update, {"color": "#DC2626", "brush_size": 16.0})
+        self.assertEqual(tool_update({"eraser_radius": 50 / 1440}, 1280, 720), {"eraser_size": 50.0})
+
+    def test_irrelevant_or_invalid_params_are_ignored(self):
+        self.assertEqual(tool_update({"state_frames": 4, "stroke_id": "s1"}, 1280, 720), {})
+        self.assertEqual(tool_update({"color": "red", "brush_size": -1, "eraser_radius": 3}, 1280, 720), {})
+        self.assertEqual(tool_update({"brush_size": True}, 1280, 720), {})
+        self.assertEqual(tool_update(None, 1280, 720), {})
 
 
 if __name__ == "__main__":
