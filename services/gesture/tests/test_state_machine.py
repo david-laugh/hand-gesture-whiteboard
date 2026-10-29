@@ -23,7 +23,7 @@ def shifted(lms, dx=0.0, dy=0.0):
 @pytest.fixture
 def machine():
     # 환경변수와 상관없이 기본값으로 고정
-    return GestureStateMachine(enter_frames=3, exit_frames=3, session_gap_ms=500)
+    return GestureStateMachine(enter_frames=3, exit_frames=3, enter_ms=0, exit_ms=0, session_gap_ms=500)
 
 
 class Runner:
@@ -127,7 +127,7 @@ def _stroke_id_from_new_process() -> str:
     code = (
         "from src.state_machine import GestureStateMachine;"
         "from tests.conftest import load_landmarks;"
-        "m = GestureStateMachine(enter_frames=1);"
+        "m = GestureStateMachine(enter_frames=1, enter_ms=0);"
         "print(m.step(load_landmarks('index_pose'), 1, 1).stroke_id)"
     )
     out = subprocess.run(

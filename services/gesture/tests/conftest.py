@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import os
 from pathlib import Path
 
@@ -35,6 +36,18 @@ def load_fixture(name: str) -> dict:
 def load_landmarks(name: str):
     """fixture 파일의 첫 번째 손 21개 점."""
     return LandmarkMessage.model_validate(load_fixture(name)).hands[0].landmarks
+
+
+def enter_frames_at(interval_ms: float) -> int:
+    """프레임 간격이 interval_ms일 때 *_START까지 필요한 프레임 수 (state_machine과 같은 규칙)."""
+    from src import config
+    return max(config.DRAW_ENTER_FRAMES, math.ceil((config.STATE_ENTER_MS - 5) / interval_ms))
+
+
+def exit_frames_at(interval_ms: float) -> int:
+    """프레임 간격이 interval_ms일 때 *_END까지 필요한 프레임 수."""
+    from src import config
+    return max(config.DRAW_EXIT_FRAMES, math.ceil((config.STATE_EXIT_MS - 5) / interval_ms))
 
 
 def to_vision_format(repo_msg: dict) -> dict:

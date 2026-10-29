@@ -9,7 +9,7 @@ from src import config
 from src.main import app
 from src.mqtt_io import MqttBridge
 from src.processor import GestureProcessor
-from tests.conftest import load_fixture, to_vision_format
+from tests.conftest import enter_frames_at, exit_frames_at, load_fixture, to_vision_format
 
 PREFIX = "hgw/v1"
 
@@ -72,7 +72,7 @@ def gestures(bridge):
     return [m["gesture"] for _, m, _, _ in published(bridge)]
 
 
-M = config.DRAW_EXIT_FRAMES  # 이탈 프레임 수 (기본 5)
+N, M = enter_frames_at(66), exit_frames_at(66)  # 66ms 간격에서 진입/이탈에 필요한 프레임 수
 DRAW_SEQUENCE = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * M + ["no_hand"] * 2
 
 
@@ -81,9 +81,9 @@ def test_sequence_publishes_draw_start_move_end(bridge, fmt):
     for i, pose in enumerate(DRAW_SEQUENCE):
         deliver(bridge, frame(pose, i, fmt))
     assert gestures(bridge) == (
-        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * 3 + ["DRAW_MOVE"] * (M - 1) + ["DRAW_END"] + ["IDLE"] * 2
+        ["IDLE"] * (2 + N - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (6 - N) + ["DRAW_MOVE"] * (M - 1) + ["DRAW_END"] + ["IDLE"] * 2
     )
-    stroke_ids = {m["params"].get("stroke_id") for _, m, _, _ in published(bridge)[4:4 + 4 + M]}
+    stroke_ids = {m["params"].get("stroke_id") for _, m, _, _ in published(bridge)[2 + N - 1:2 + 6 + M]}
     assert len(stroke_ids) == 1 and None not in stroke_ids
 
 
@@ -114,7 +114,7 @@ def test_invalid_messages_are_skipped(bridge, caplog):
 
     for i in range(3):
         deliver(bridge, frame("index_pose", 10 + i))
-    assert gestures(bridge) == ["IDLE", "IDLE", "DRAW_START"]
+    assert gestures(bridge) == ["IDLE"] * (N - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (3 - N)
 
 
 def test_gap_while_drawing_publishes_draw_end(bridge, clock):
@@ -153,7 +153,7 @@ def test_gap_watch_uses_server_clock_not_ts(clock, ts_offset_ms):
         deliver(b, frame("index_pose", i, ts_offset_ms=ts_offset_ms))
         b.check_gaps()
         clock.t += 0.066
-    assert gestures(b) == ["IDLE", "IDLE", "DRAW_START"] + ["DRAW_MOVE"] * 17
+    assert gestures(b) == ["IDLE"] * (N - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (20 - N)
 
     clock.t += 0.4  # 마지막 수신 후 약 470ms: 아직 아님
     b.check_gaps()

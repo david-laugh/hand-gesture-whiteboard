@@ -47,8 +47,9 @@ def bunch(tw: float):
         lms[mcp + 1] = P(x, wy - hs * (tw + 0.15))  # PIP: 손끝보다 손목에서 멀다 → 접힘
         lms[mcp + 2] = P(x, wy - hs * (tw + 0.10))
     tip = P(wx, wy - hs * tw)
-    for t in (8, 12, 16, 20, 4):
+    for t in (8, 12, 16, 20):
         lms[t] = P(tip.x, tip.y)
+    lms[4] = P(tip.x - 0.33 * hs, tip.y)  # 엄지 끝은 손끝 근처 (rec03 손끝 모으기의 엄지–검지 거리 중앙값 0.33)
     lms[1], lms[2], lms[3] = P(0.42, 0.85), P(0.40, 0.80), P(0.45, 0.75)
     return lms
 
@@ -82,14 +83,15 @@ class Runner:
                         canvas_min_side=720, normal_sign=1, thresholds=Thresholds(
                             ratio=0.15, erase_enter=1.20, erase_exit=1.15, fist_max=1.18, zoom_pinch=0.20,
                             zoom_l_enter=1.45, zoom_l_exit=1.30, zoom_index_min=0.0),
-                        zoom_min=0.5, zoom_max=3.0, zoom_dist_floor=0.25)
+                        zoom_min=0.5, zoom_max=3.0, zoom_dist_floor=0.25,
+                        zoom_reset_hold_ms=1000, zoom_reset_still=0.08)
         self.m = GestureStateMachine(**{**defaults, **kw})
         self.ts = 1_000_000
 
-    def feed(self, lms, n=1):
+    def feed(self, lms, n=1, frame_ms=FRAME_MS):
         out = []
         for _ in range(n):
-            self.ts += FRAME_MS
+            self.ts += frame_ms
             out.append(self.m.step(lms, self.ts, self.ts))
         return out
 
@@ -308,3 +310,60 @@ def test_processor_keeps_tool_settings_after_gap():
     proc.expire()
     assert proc._sessions["s"].machine.color == COLORS[2]
     assert proc._sessions["s"].machine.zoom_scale == 2.0
+
+# --- 3차 보완: 1배 복귀, 손끝 퍼짐, 시간 기준 debounce ---------------------------------
+
+def test_pinch_held_still_for_1s_resets_zoom():
+    r = Runner()
+    r.feed(PINCH_LMS, 4)
+    r.feed(pinch_zoom(1.2), 10)  # 벌려서 확대
+    zoomed = r.m._zoom_now
+    assert zoomed > 1.5
+    res = r.feed(PINCH_LMS, 50)  # 다시 붙이고 1.6초 유지
+    g = gestures(res)
+    i = g.index("ZOOM_END")
+    assert res[i - 1].gesture == "ZOOM_UPDATE" and res[i - 1].params["zoom_scale"] == 1.0
+    assert res[i].params["zoom_scale"] == 1.0
+    assert "ZOOM_START" not in g[i:]  # 집게를 계속 쥐고 있어도 다시 시작하지 않음
+    assert r.m.zoom_scale == 1.0
+    # 집게를 풀었다가 다시 하면 새 줌 (배율 1에서 시작)
+    r.feed(None, 6)
+    start = [x for x in r.feed(PINCH_LMS, 4) if x.gesture == "ZOOM_START"][0]
+    assert start.params["zoom_scale"] == 1.0
+
+
+def test_opening_does_not_trigger_reset():
+    """벌리는 중(거리가 계속 바뀌거나 집게 범위를 벗어남)에는 1초가 지나도 1배로 돌아가지 않는다."""
+    r = Runner()
+    r.feed(PINCH_LMS, 4)
+    res = []
+    for i in range(40):  # 약 1.3초 동안 0.10 → 1.07로 천천히 벌림
+        res += r.feed(pinch_zoom(0.10 + i * 0.025))
+    g = gestures(res)
+    assert "ZOOM_END" not in g
+    assert res[-1].params["zoom_scale"] > 2.0
+
+
+def test_scattered_folded_fingertips_are_not_erase():
+    """주먹에서 검지를 펴는 중간처럼, 네 손가락이 접힘으로 보이고 tip_wrist가 커도 손끝이 흩어져 있으면 지우개가 아니다."""
+    lms = bunch(1.30)
+    for t, dx in ((8, -0.06), (12, -0.02), (16, 0.03), (20, 0.07)):  # 손끝을 옆으로 흩음
+        lms[t] = P(lms[t].x + dx, lms[t].y)
+    from src.hand_pose import tip_spread
+    assert tip_spread(lms) > 0.18 and tip_spread(BUNCH_LMS) < 0.18
+    assert detect_pose(lms).pose != ERASE
+    assert detect_pose(BUNCH_LMS).pose == ERASE
+
+
+@pytest.mark.parametrize("frame_ms", [33, 66])
+def test_enter_and_exit_are_time_based(frame_ms):
+    """30fps와 15fps에서 진입은 약 100ms, 이탈은 약 170ms 뒤 (프레임 수가 아니라 시간 기준)."""
+    from src.state_machine import GestureStateMachine as GSM
+    m = GSM(enter_frames=2, exit_frames=2, enter_ms=100, exit_ms=170)
+    ts, g = 1_000_000, []
+    for lms in [DRAW_LMS] * 8 + [None] * 8:
+        ts += frame_ms
+        g.append(m.step(lms, ts, ts).gesture)
+    start, end = g.index("DRAW_START"), g.index("DRAW_END")
+    assert 95 <= (start + 1) * frame_ms <= 100 + frame_ms
+    assert 165 <= (end - 8 + 1) * frame_ms <= 170 + frame_ms

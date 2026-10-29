@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from src import config
 from src.main import app, processor
 from src.mqtt_io import MqttBridge
-from tests.conftest import load_fixture, to_vision_format
+from tests.conftest import enter_frames_at, load_fixture, to_vision_format
 from tests.test_mqtt import FakeClient
 
 WS_PATH = "/ws/landmarks"
@@ -38,14 +38,16 @@ def gestures(bridge):
 
 def test_ws_sequence_publishes_start_move_end(fake_bridge, gesture_validator):
     client, bridge = fake_bridge
-    m = config.DRAW_EXIT_FRAMES
+    from tests.conftest import enter_frames_at, exit_frames_at
+
+    n, m = enter_frames_at(66), exit_frames_at(66)
     seq = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * m + ["no_hand"] * 2
     with client.websocket_connect(WS_PATH) as ws:
         for i, pose in enumerate(seq):
             ws.send_text(text(pose, i))
     # 연결을 닫으면 서버 쪽 처리가 끝날 때까지 기다린다
     assert gestures(bridge) == (
-        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * (3 + m - 1) + ["DRAW_END"] + ["IDLE"] * 2
+        ["IDLE"] * (2 + n - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (6 - n + m - 1) + ["DRAW_END"] + ["IDLE"] * 2
     )
     topics = {t for t, _, _, _ in bridge.client.published}
     assert topics == {"hgw/v1/gestures/ws-01"}
@@ -63,7 +65,8 @@ def test_ws_keeps_connection_after_invalid_messages(fake_bridge, caplog):
             ws.send_text(text("index_pose", i))
     assert caplog.text.count("invalid_message") == 3
     # 잘못된 메시지 뒤에도 같은 연결로 처리됨. 마지막 END는 그리는 중에 연결을 닫아서 나온 것.
-    assert gestures(bridge) == ["IDLE", "IDLE", "DRAW_START", "DRAW_END"]
+    n = enter_frames_at(66)
+    assert gestures(bridge) == ["IDLE"] * (n - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (3 - n) + ["DRAW_END"]
 
 
 def test_ws_disconnect_while_drawing_publishes_draw_end_once(fake_bridge, monkeypatch, gesture_validator):
@@ -71,7 +74,8 @@ def test_ws_disconnect_while_drawing_publishes_draw_end_once(fake_bridge, monkey
     with client.websocket_connect(WS_PATH) as ws:
         for i in range(5):
             ws.send_text(text("index_pose", i))
-    assert gestures(bridge) == ["IDLE", "IDLE", "DRAW_START", "DRAW_MOVE", "DRAW_MOVE", "DRAW_END"]
+    n = enter_frames_at(66)
+    assert gestures(bridge) == ["IDLE"] * (n - 1) + ["DRAW_START"] + ["DRAW_MOVE"] * (5 - n) + ["DRAW_END"]
     last_move, end = bridge.client.published[-2][1], bridge.client.published[-1][1]
     gesture_validator.validate(end)
     assert end["pointer"] == last_move["pointer"]

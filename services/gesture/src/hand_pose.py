@@ -105,6 +105,15 @@ def tip_wrist(landmarks: Sequence[Point]) -> float:
     return 0.0 if hand <= 1e-6 else _dist(_mean(landmarks, FINGER_TIPS), landmarks[WRIST]) / hand
 
 
+def tip_spread(landmarks: Sequence[Point]) -> float:
+    """다섯 손끝(4,8,12,16,20)이 그 평균점에서 떨어진 평균 거리 ÷ 손 크기. 손끝을 모으면 작다."""
+    hand = _hand_size(landmarks)
+    if hand <= 1e-6:
+        return float("inf")
+    c = _mean(landmarks, ALL_TIPS)
+    return sum(_dist(landmarks[i], c) for i in ALL_TIPS) / len(ALL_TIPS) / hand
+
+
 def pinch_ratio(landmarks: Sequence[Point]) -> float:
     """엄지 끝 ~ 검지 끝 거리 ÷ 손 크기. 작을수록 붙어 있음."""
     hand = _hand_size(landmarks)
@@ -128,10 +137,15 @@ class Thresholds:
     erase_enter: float = config.ERASE_TIP_WRIST_ENTER
     erase_exit: float = config.ERASE_TIP_WRIST_EXIT
     fist_max: float = config.FIST_TIP_WRIST_MAX
+    erase_spread_enter: float = config.ERASE_SPREAD_ENTER
+    erase_spread_exit: float = config.ERASE_SPREAD_EXIT
     zoom_pinch: float = config.ZOOM_PINCH_RATIO
     zoom_l_enter: float = config.ZOOM_L_ENTER
     zoom_l_exit: float = config.ZOOM_L_EXIT
     zoom_index_min: float = config.ZOOM_INDEX_MIN_RATIO
+    zoom_pinch_tight: float = config.ZOOM_PINCH_TIGHT
+    zoom_tight_index_min: float = config.ZOOM_TIGHT_INDEX_MIN
+    zoom_keep_index_min: float = config.ZOOM_KEEP_INDEX_MIN
 
 
 @dataclass
@@ -146,25 +160,44 @@ def _three_folded(landmarks: Sequence[Point], th: Thresholds) -> bool:
     return not any(finger_extended(landmarks, f, th.ratio) for f in (MIDDLE, RING, PINKY))
 
 
+def _is_pinch_zoom(landmarks: Sequence[Point], th: Thresholds) -> bool:
+    """집게 줌: (검지가 덜 접혀 있고 엄지가 붙음) 또는 (검지를 말아 엄지에 꼭 붙임). 주먹은 둘 다 아니다."""
+    pinch, index = pinch_ratio(landmarks), finger_ratio(landmarks, INDEX)
+    return ((index > th.zoom_index_min and pinch < th.zoom_pinch)
+            or (index > th.zoom_tight_index_min and pinch < th.zoom_pinch_tight))
+
+
 def _detect(landmarks: Sequence[Point], th: Thresholds, erasing: bool, zooming: bool, zoom_cand: bool) -> Detection:
     tip = landmarks[INDEX_TIP]
     zoom = Detection(ZOOM, thumb_index_mid(landmarks), False, pinch_ratio(landmarks))
-    # 줌 중에는 엄지 위치와 상관없이, 세 손가락이 접혀 있고 검지가 접히지 않았으면 계속 줌 (집게 ↔ L자 사이 포함)
-    if zooming and _three_folded(landmarks, th) and finger_ratio(landmarks, INDEX) > th.zoom_index_min:
+    # 줌 중에는 엄지·검지 거리와 상관없이, 세 손가락이 접혀 있고 검지가 깊게 접히지 않았으면(또는 꼭 붙인 집게면)
+    # 계속 줌. 집게에서 벌리는 중간에 검지가 펴져 "그리기"처럼 보여도 줌이 끊기지 않는다.
+    # 단, 손끝이 손목에서 멀면(tip_wrist ≥ 모으기 진입값) 손끝 모으기 영역이라 줌으로 보지 않는다
+    # (rec03: 엄지를 손끝에 붙인 모으기가 집게 줌으로 읽혔던 경우. 줌 집게는 tip_wrist 0.84~1.02)
+    tw = tip_wrist(landmarks)
+    bunch_zone = tw >= th.erase_enter
+    if zooming and not bunch_zone and _three_folded(landmarks, th) and (
+            finger_ratio(landmarks, INDEX) > th.zoom_keep_index_min or _is_pinch_zoom(landmarks, th)):
         return zoom
 
     pattern = finger_pose(landmarks, th.ratio)
     if pattern == FIST:
-        tw = tip_wrist(landmarks)
-        if tw > (th.erase_exit if erasing else th.erase_enter):
+        # 손끝 모으기: 손끝이 손목에서 멀고 + 다섯 손끝이 한데 모여 있음.
+        # 주먹에서 검지를 펴는 중간에도 tw가 커지지만 그때는 손끝이 흩어져 있어서 퍼짐으로 걸러진다.
+        spread_max = th.erase_spread_exit if erasing else th.erase_spread_enter
+        if tw > (th.erase_exit if erasing else th.erase_enter) and tip_spread(landmarks) < spread_max:
             return Detection(ERASE, _mean(landmarks, ALL_TIPS), False)
-        # 집게 줌: 검지가 덜 접혀 있고 엄지 끝이 검지 끝에 붙음 (주먹은 검지가 깊게 접혀 있어 제외)
-        if finger_ratio(landmarks, INDEX) > th.zoom_index_min and pinch_ratio(landmarks) < th.zoom_pinch:
+        if not bunch_zone and _is_pinch_zoom(landmarks, th):
             return zoom
         return Detection(FIST if tw < th.fist_max else NONE, tip, False)
     if pattern == DRAW:
         l_threshold = th.zoom_l_exit if zoom_cand else th.zoom_l_enter
-        if pinch_ratio(landmarks) < th.zoom_pinch or thumb_spread(landmarks) > l_threshold:
+        if pinch_ratio(landmarks) < th.zoom_pinch:
+            # 손끝이 손목에서 멀고 모여 있으면 검지가 살짝 들린 손끝 모으기 → 줌도 그리기도 아님
+            if bunch_zone and tip_spread(landmarks) < th.erase_spread_exit:
+                return Detection(NONE, tip, False)
+            return zoom
+        if thumb_spread(landmarks) > l_threshold:
             return zoom
         return Detection(DRAW, tip, False)
     return Detection(pattern, tip, False)
