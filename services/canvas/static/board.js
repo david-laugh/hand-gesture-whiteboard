@@ -47,20 +47,43 @@ function setPenColor(value) {
   return true;
 }
 
+// Strokes are kept in fixed canvas coordinates on an offscreen page; the visible board shows that
+// page through the zoom view (screen = canvas * scale + offset) sent by the server as set_view.
+const page = document.createElement('canvas');
+page.width = board.width; page.height = board.height;
+const pageContext = page.getContext('2d');
+const IDENTITY = {scale: 1, offset: {x: 0, y: 0}};
+let view = IDENTITY;
+
+function setView(next) {
+  view = next && next.scale > 0 && next.offset ? next : IDENTITY;
+  const zoom = document.getElementById('zoom');
+  zoom.hidden = Math.abs(view.scale - 1) < 0.01;
+  zoom.textContent = `확대 ${view.scale.toFixed(1)}×`;
+}
+
 function draw() {
-  context.clearRect(0, 0, board.width, board.height);
-  context.lineCap = context.lineJoin = 'round';
+  pageContext.clearRect(0, 0, page.width, page.height);
+  pageContext.lineCap = pageContext.lineJoin = 'round';
   for (const stroke of strokes.values()) {
     if (!stroke.points.length) continue;
     const [first, ...rest] = stroke.points;
-    context.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
-    context.strokeStyle = context.fillStyle = stroke.style.color || '#172554';
-    context.lineWidth = stroke.style.width || (stroke.erase ? 30 : 4);
-    context.beginPath(); context.moveTo(first.x, first.y);
-    if (rest.length) { for (const point of rest) context.lineTo(point.x, point.y); context.stroke(); }
-    else { context.arc(first.x, first.y, context.lineWidth / 2, 0, Math.PI * 2); context.fill(); }
+    pageContext.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
+    pageContext.strokeStyle = pageContext.fillStyle = stroke.style.color || '#172554';
+    pageContext.lineWidth = stroke.style.width || (stroke.erase ? 30 : 4);
+    pageContext.beginPath(); pageContext.moveTo(first.x, first.y);
+    if (rest.length) { for (const point of rest) pageContext.lineTo(point.x, point.y); pageContext.stroke(); }
+    else { pageContext.arc(first.x, first.y, pageContext.lineWidth / 2, 0, Math.PI * 2); pageContext.fill(); }
   }
-  context.globalCompositeOperation = 'source-over';
+  pageContext.globalCompositeOperation = 'source-over';
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.fillStyle = '#cbd5e1';  // area outside the page, visible only when zoomed out
+  context.fillRect(0, 0, board.width, board.height);
+  context.setTransform(view.scale, 0, 0, view.scale, view.offset.x, view.offset.y);
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, page.width, page.height);
+  context.drawImage(page, 0, 0);
+  context.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 function apply(operations, reset = false) {
@@ -70,6 +93,7 @@ function apply(operations, reset = false) {
     else if (operation.type.endsWith('_begin')) strokes.set(operation.stroke_id, {points: [...operation.points], style: operation.style || {}, erase: operation.type === 'erase_begin'});
     else if (operation.type.endsWith('_append')) strokes.get(operation.stroke_id)?.points.push(...operation.points);
     else if (operation.type === 'remove_stroke') strokes.delete(operation.stroke_id);
+    else if (operation.type === 'set_view') setView(operation.view);
   }
   draw();
 }
@@ -139,7 +163,7 @@ function connect() {
     if (message.type === 'saved') { showSaved(message.file); return; }
     if (message.type === 'tool') { applyTool(message); return; }
     if (message.type === 'session_end') { setStatus(false); clearSkeleton(); return; }
-    if (message.type === 'snapshot') { snapshotSequence = message.sequence; apply(message.operations, true); return; }
+    if (message.type === 'snapshot') { snapshotSequence = message.sequence; setView(message.view); apply(message.operations, true); return; }
     if (message.sequence <= snapshotSequence) return;
     snapshotSequence = message.sequence; apply(message.operations);
   };
@@ -153,7 +177,8 @@ function point(event) {
 
 function updateCursor(event) {
   const box = board.getBoundingClientRect();
-  const size = activeSize() * box.width / board.width;
+  // The pointer circle shows the real footprint, which grows with the zoom.
+  const size = activeSize() * view.scale * box.width / board.width;
   cursor.style.left = `${event.clientX - box.left}px`;
   cursor.style.top = `${event.clientY - box.top}px`;
   cursor.style.width = cursor.style.height = `${Math.max(size, 4)}px`;

@@ -24,7 +24,13 @@ class Session:
     order: list = field(default_factory=list)
     redo: list = field(default_factory=list)
     active_id: str | None = None
+    # Viewport: screen_px = canvas_px * scale + offset (identity = scale 1, offset 0).
     view: dict = field(default_factory=lambda: {"scale": 1.0, "offset": {"x": 0, "y": 0}})
+    # During a zoom gesture: (screen anchor px, canvas point under it) kept fixed while scaling.
+    zoom_anchor: tuple | None = None
+
+
+ZOOM_MIN, ZOOM_MAX = 0.5, 3.0
 
 
 class CanvasEngine:
@@ -37,11 +43,44 @@ class CanvasEngine:
     def session(self, session_id):
         return self.sessions.setdefault(session_id, Session())
 
+    def to_canvas(self, state, screen_x, screen_y):
+        """Screen pixels of the current (zoomed) view -> fixed canvas pixels."""
+        scale, offset = state.view["scale"], state.view["offset"]
+        return (screen_x - offset["x"]) / scale, (screen_y - offset["y"]) / scale
+
+    def clamp_offset(self, scale, offset_x, offset_y):
+        """Zoomed in: never show empty space beside the page. Zoomed out: keep the page centered."""
+        def axis(size, offset):
+            span = size * scale
+            return (size - span) / 2 if span <= size else min(0.0, max(size - span, offset))
+        return axis(self.width, offset_x), axis(self.height, offset_y)
+
+    def zoom(self, state, command, params):
+        try:
+            scale = float(params.get("zoom_scale", state.view["scale"]))
+        except (TypeError, ValueError):
+            scale = state.view["scale"]
+        scale = max(ZOOM_MIN, min(ZOOM_MAX, scale))
+        center = params.get("zoom_center")
+        if not (isinstance(center, dict) and all(isinstance(center.get(a), (int, float)) for a in ("x", "y"))):
+            center = {"x": .5, "y": .5}
+        anchor_screen = (min(1, max(0, center["x"])) * self.width, min(1, max(0, center["y"])) * self.height)
+        # Pin the canvas point that was under the fingers when the zoom started (pinch-zoom behaviour).
+        if command == "ZOOM_START" or not state.zoom_anchor or state.zoom_anchor[0] != anchor_screen:
+            state.zoom_anchor = (anchor_screen, self.to_canvas(state, *anchor_screen))
+        (screen_x, screen_y), (canvas_x, canvas_y) = state.zoom_anchor
+        offset_x, offset_y = self.clamp_offset(scale, screen_x - scale * canvas_x, screen_y - scale * canvas_y)
+        state.view = {"scale": round(scale, 4), "offset": {"x": round(offset_x, 2), "y": round(offset_y, 2)}}
+        if command == "ZOOM_END":
+            state.zoom_anchor = None
+        return {"type": "set_view", "view": state.view}
+
     def point(self, pointer, state, previous=None):
         if pointer is None:
             return None
-        raw = {"x": max(0, min(self.width, pointer["x"] * self.width)),
-               "y": max(0, min(self.height, pointer["y"] * self.height))}
+        # Pointers are in the zoomed screen; strokes are stored in the fixed canvas coordinates.
+        canvas_x, canvas_y = self.to_canvas(state, pointer["x"] * self.width, pointer["y"] * self.height)
+        raw = {"x": max(0, min(self.width, canvas_x)), "y": max(0, min(self.height, canvas_y))}
         # Low-pass filtering settles small frame-to-frame landmark jitter.
         if previous:
             raw = {axis: previous[axis] + self.smoothing * (raw[axis] - previous[axis]) for axis in ("x", "y")}
@@ -112,11 +151,7 @@ class CanvasEngine:
             state.strokes.clear(); state.order.clear(); state.redo.clear(); state.active_id = None
             operations.append({"type": "clear"})
         elif command in ("ZOOM_START", "ZOOM_UPDATE", "ZOOM_END"):
-            scale = params.get("zoom_scale", 1.0)
-            center = params.get("zoom_center", {"x": .5, "y": .5})
-            state.view = {"scale": max(.1, min(5.0, scale)),
-                          "offset": {"x": center["x"] * self.width, "y": center["y"] * self.height}}
-            operations.append({"type": "set_view", "view": state.view})
+            operations.append(self.zoom(state, command, params))
         else:
             operations.append({"type": "noop"})
         state.sequence += 1
