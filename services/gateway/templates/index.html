@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>카메라 전송</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <video id="video" playsinline muted></video>
+  <main>
+    <div class="settings">
+      <label>FPS <select id="fps"><option>10</option><option>15</option><option selected>20</option><option>30</option></select></label>
+      <label>해상도 <select id="width"><option>640</option><option selected>960</option><option>1280</option></select></label>
+      <label>화질 <select id="quality"><option value="0.5">낮음</option><option value="0.7" selected>보통</option><option value="0.85">높음</option></select></label>
+    </div>
+    <button id="toggle">촬영 시작</button>
+    <p id="status" class="off" role="status">연결 대기 중</p>
+    <p id="message"></p>
+  </main>
+</body>
+</html>

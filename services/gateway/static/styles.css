@@ -1,0 +1,14 @@
+:root { font-family: system-ui, "Apple SD Gothic Neo", sans-serif; color: #e8e4da; background: #1d2326; }
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { display: flex; flex-direction: column; }
+video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #111; }
+main { padding: 14px 16px max(18px, env(safe-area-inset-bottom)); display: grid; gap: 12px; }
+.settings { display: flex; flex-wrap: wrap; gap: 10px; }
+label { display: flex; align-items: center; gap: 6px; font-size: 14px; color: #b6c0c3; }
+button, select { font: inherit; border-radius: 6px; }
+select { padding: 6px 8px; color: inherit; background: #2b3439; border: 1px solid #3a4448; }
+button { padding: 14px; border: 0; background: #c98a3c; color: #1d2326; font-weight: 700; }
+button.stop { background: #3a4448; color: #e8e4da; }
+#status, #message { margin: 0; font-size: 14px; }
+.on { color: #5fae82; } .off, #message { color: #e0644d; }
