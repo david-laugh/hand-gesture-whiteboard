@@ -33,13 +33,7 @@ docker build -t hand-gesture-canvas ./services/canvas
 ### 3. Canvas container 실행
 
 ```bash
-docker run -d --name hgw-canvas --network hgw-net \
-  -e MQTT_HOST=hgw-mqtt \
-  -e MQTT_PORT=1883 \
-  -e MQTT_TOPIC_PREFIX=hgw/v1 \
-  -e CANVAS_WIDTH=1280 \
-  -e CANVAS_HEIGHT=720 \
-  hand-gesture-canvas
+docker run -d --name hgw-canvas --network hgw-net -e MQTT_HOST=hgw-mqtt -e MQTT_PORT=1883 -e MQTT_TOPIC_PREFIX=hgw/v1 -e CANVAS_WIDTH=1280 -e CANVAS_HEIGHT=720 hand-gesture-canvas
 ```
 
 Canvas는 외부 포트를 열지 않습니다. 같은 Docker network의 서비스만 HTTP health/apply/export endpoint에 접근할 수 있습니다.
