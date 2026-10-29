@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pipeline Latency</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script type="module" src="/static/dashboard.js"></script>
+</head>
+<body>
+<div class="viz-root">
+  <header>
+    <div>
+      <h1>파이프라인 지연 대시보드</h1>
+      <p class="sub">gateway → vision → gesture → canvas · MQTT 수동 구독 · 프레임은 <code>session_id</code> + <code>frame_id</code>로 연결</p>
+    </div>
+    <div class="filters">
+      <label>집계 구간
+        <select id="window">
+          <option value="10">최근 10초</option>
+          <option value="30" selected>최근 30초</option>
+          <option value="60">최근 60초</option>
+          <option value="120">최근 120초</option>
+        </select>
+      </label>
+    </div>
+  </header>
+
+  <section class="status" id="status" aria-live="polite"></section>
+
+  <section class="tiles">
+    <div class="tile"><span class="tile-label">촬영 → canvas p50</span><span class="tile-value" id="t-e2e50">–</span></div>
+    <div class="tile"><span class="tile-label">촬영 → canvas p95</span><span class="tile-value" id="t-e2e95">–</span></div>
+    <div class="tile"><span class="tile-label">canvas 결과 FPS</span><span class="tile-value" id="t-fps">–</span><span class="tile-note" id="t-fps-note"></span></div>
+    <div class="tile"><span class="tile-label">끝까지 처리된 프레임</span><span class="tile-value" id="t-complete">–</span><span class="tile-note" id="t-complete-note"></span></div>
+  </section>
+
+  <section class="card">
+    <h2>단계별 지연 구성 <span class="muted" id="stack-caption"></span></h2>
+    <div id="stack" class="stack"></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <section class="card">
+    <h2>촬영 → canvas 지연 추이 <span class="muted">(ms · 최근 120초, 1초 단위)</span></h2>
+    <div class="legend">
+      <span class="key"><i class="swatch line s-p50"></i>p50</span>
+      <span class="key"><i class="swatch line s-p95"></i>p95</span>
+    </div>
+    <div id="trend" class="trend"></div>
+  </section>
+
+  <div class="grid2">
+    <section class="card">
+      <h2>단계별 상세</h2>
+      <table id="stage-table"><thead><tr><th>단계</th><th>측정</th><th class="num">p50</th><th class="num">p95</th><th class="num">최대</th><th class="num">n</th></tr></thead><tbody></tbody></table>
+    </section>
+    <section class="card">
+      <h2>처리량과 손실</h2>
+      <table id="flow-table"><thead><tr><th>토픽</th><th class="num">FPS</th><th class="num">수신</th><th class="num">미매칭</th></tr></thead><tbody></tbody></table>
+      <ul class="losses" id="losses"></ul>
+    </section>
+  </div>
+
+  <section class="card">
+    <h2>Vision 내부 처리 시간 <span class="muted" id="vision-caption"></span></h2>
+    <table id="vision-table"><thead><tr><th>구간</th><th class="num">평균</th><th class="num">p50</th><th class="num">p95</th><th class="num">최대</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section class="card">
+    <h2>최근 프레임</h2>
+    <div class="scroll">
+      <table id="recent-table"><thead><tr><th class="num">frame</th><th>결과</th><th>gesture</th><th class="num">uplink</th><th class="num">gateway</th><th class="num">vision</th><th class="num">gesture</th><th class="num">canvas</th><th class="num">전체</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <footer class="muted">
+    측정 방식: 대시보드가 각 MQTT 메시지를 <b>받은 시각</b>을 같은 시계로 기록해 단계 간 차이를 계산합니다(브로커 경유 시간 포함).
+    uplink(휴대폰 → gateway)는 gateway가 ping으로 맞춘 휴대폰 시계를 쓰므로 ping 왕복의 절반 정도 오차가 있습니다.
+    canvas 결과가 브라우저 화면에 그려지는 시점은 포함되지 않습니다. 마지막 <span id="settle"></span>초 프레임은 아직 집계 대기 중입니다.
+  </footer>
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+</div>
+</body>
+</html>
