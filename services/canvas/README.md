@@ -15,10 +15,10 @@ Gateway에서 이미 `hgw-net`과 `hgw-mqtt`를 실행했다면 이 단계는 �
 
 ```bash
 docker network create hgw-net
-docker run -d --name hgw-mqtt --network hgw-net \
-  -p 127.0.0.1:11883:1883 \
-  eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+docker run -d --name hgw-mqtt --network hgw-net -p 127.0.0.1:11883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
 ```
+
+Windows `cmd.exe`에서는 `\`로 줄을 나누지 않습니다. 위 명령을 각각 한 줄로 붙여넣습니다. `network with name hgw-net already exists`는 network가 이미 준비되었다는 뜻이므로 무시합니다. `hgw-mqtt`가 이미 실행 중인지 확인하려면 `docker ps --filter name=hgw-mqtt`를 실행합니다.
 
 `hgw-net`은 container가 `hgw-mqtt`라는 이름으로 broker에 연결하도록 하는 Docker network입니다. `11883` host 포트는 PC에서 MQTT 확인 도구를 쓸 때만 사용하며, Canvas container는 내부 포트 `1883`으로 연결합니다.
 
