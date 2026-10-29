@@ -1,19 +1,25 @@
 """gesture 서비스 (Container C) 진입점.
 
-- MQTT: {prefix}/landmarks/+ 구독 → 처리 → {prefix}/gestures/{session_id} 발행 (mqtt_io.py)
-- HTTP: /v1/classify 는 테스트·확인용. 같은 어댑터와 처리 함수를 쓰지만 발행하지 않는다.
+입력 (둘 다 켜 둘 수 있음)
+- MQTT: {prefix}/landmarks/+ 구독 (mqtt_io.py, MQTT_INPUT_ENABLED)
+- WebSocket: /ws/landmarks, vision이 client로 접속해 텍스트 메시지 1개 = 프레임 1개 (WS_INPUT_ENABLED)
+출력
+- MQTT: {prefix}/gestures/{session_id} 발행
+HTTP /v1/classify 는 테스트·확인용. 같은 어댑터와 처리 함수를 쓰지만 발행하지 않는다.
 """
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Body, FastAPI, Request, Response
+from fastapi import Body, FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from . import config
 from .adapter import MessageError, to_landmark_message
+from .logs import log_json
 from .mqtt_io import MqttBridge
 from .processor import GestureProcessor, now_ms
 
@@ -100,3 +106,46 @@ def classify(request: Request, payload: dict[str, Any] = Body(...)):
     except MessageError as exc:
         return JSONResponse(status_code=422, content=_error_body(exc.code, str(exc), _ids_from(payload, request)))
     return processor.process(msg, source="http")
+
+
+def _publish(app: FastAPI, out: dict) -> None:
+    bridge: MqttBridge | None = getattr(app.state, "mqtt", None)
+    if bridge is None:
+        log_json(logging.WARNING, event="publish_skipped_mqtt_disabled",
+                 frame_id=out["frame_id"], gesture=out["gesture"])
+        return
+    bridge.publish(out)
+
+
+if config.WS_INPUT_ENABLED:
+
+    @app.websocket("/ws/landmarks")
+    async def ws_landmarks(websocket: WebSocket) -> None:
+        """vision → gesture. 단방향이라 응답은 보내지 않는다. 메시지는 받은 순서대로 하나씩 처리한다."""
+        await websocket.accept()
+        app_ = websocket.app
+        peer = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "?"
+        seen_sessions: set[str] = set()  # 이 연결로 들어온 세션 (끊길 때 그리던 획을 닫기 위해)
+        log_json(event="ws_connected", peer=peer)
+        try:
+            while True:
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    break
+                payload = message.get("text") if message.get("text") is not None else message.get("bytes")
+                try:
+                    out = processor.process_payload(payload, source="ws", origin=peer)
+                except Exception:  # 처리 중 예상 못 한 오류도 연결은 유지
+                    logging.getLogger(config.SERVICE_NAME).exception("ws process failed (peer=%s)", peer)
+                    continue
+                if out is not None:
+                    seen_sessions.add(out["session_id"])
+                    _publish(app_, out)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for sid in seen_sessions:
+                end = processor.end_session(sid, source="ws_disconnect")
+                if end is not None:
+                    _publish(app_, end)
+            log_json(event="ws_disconnected", peer=peer, sessions=sorted(seen_sessions))

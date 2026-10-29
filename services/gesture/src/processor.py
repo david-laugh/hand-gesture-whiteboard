@@ -1,15 +1,16 @@
-"""LandmarkMessage → GestureMessage 처리. HTTP와 MQTT가 같은 객체를 함께 쓴다.
+"""LandmarkMessage → GestureMessage 처리. HTTP, MQTT, WebSocket이 같은 객체를 함께 쓴다.
 
-HTTP 요청(스레드풀)과 MQTT 수신(paho 스레드), 끊김 감시(별도 스레드)가 동시에 들어오므로
-세션 상태는 lock 안에서만 바꾼다.
+HTTP 요청(스레드풀), MQTT 수신(paho 스레드), WebSocket(이벤트 루프), 끊김 감시(별도 스레드)가
+동시에 들어오므로 세션 상태는 lock 안에서만 바꾼다.
 """
 import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from . import config
+from .adapter import MessageError, decode, to_landmark_message
 from .logs import log_json
 from .models import Hand, LandmarkMessage
 from .state_machine import GestureStateMachine, StepResult
@@ -107,6 +108,31 @@ class GestureProcessor:
                  gesture=result.gesture, state_frames=result.state_frames, gesture_ms=gesture_ms, lag_ms=lag_ms)
         return out
 
+    def process_payload(self, payload: bytes | str | dict[str, Any], source: str, origin: str = "") -> dict | None:
+        """MQTT/WebSocket으로 받은 원본 메시지 처리. 잘못된 메시지는 에러 로그만 남기고 None."""
+        try:
+            data = payload if isinstance(payload, dict) else decode(payload)
+            msg = to_landmark_message(data)
+        except MessageError as exc:
+            log_json(logging.ERROR, event="invalid_message", source=source, origin=origin,
+                     code=exc.code, error=str(exc))
+            return None
+        return self.process(msg, source=source)
+
+    def _end_message(self, s: _Session, result: StepResult, source: str) -> dict:
+        """강제로 만든 DRAW_END. 마지막으로 받은 메시지의 id와 마지막 그리기 좌표를 쓴다."""
+        log_json(trace_id=s.ids["trace_id"], frame_id=s.ids["frame_id"], session_id=s.ids["session_id"],
+                 source=source, gesture=result.gesture, state_frames=result.state_frames, gesture_ms=0.0)
+        return build_gesture_message(s.ids, result, s.confidence, s.hand_index, 0.0)
+
+    def end_session(self, session_id: str, source: str) -> dict | None:
+        """그 세션이 그리는 중이면 DRAW_END를 만든다 (WebSocket 연결이 끊겼을 때).
+        force_end()가 lock 안에서 상태를 IDLE로 바꾸므로 gap_watch와 겹쳐도 END는 한 번만 나온다."""
+        with self._lock:
+            s = self._sessions.get(session_id)
+            result = s.machine.force_end() if s else None
+        return None if result is None else self._end_message(s, result, source)
+
     def expire(self) -> list[dict]:
         """SESSION_GAP_MS 동안 메시지가 없던 세션을 정리한다.
         그리는 중이었다면 DRAW_END를 만들어 돌려준다 (발행은 호출한 쪽이 한다)."""
@@ -121,13 +147,7 @@ class GestureProcessor:
                     ended.append((s, result))
                 # 세션을 지워도 된다: 다음 메시지가 오면 새로 만들고, stroke_id는 프로세스 전체에서 겹치지 않는다.
                 del self._sessions[sid]
-
-        out = []
-        for s, result in ended:
-            out.append(build_gesture_message(s.ids, result, s.confidence, s.hand_index, 0.0))
-            log_json(trace_id=s.ids["trace_id"], frame_id=s.ids["frame_id"], session_id=s.ids["session_id"],
-                     source="gap_watch", gesture=result.gesture, state_frames=result.state_frames, gesture_ms=0.0)
-        return out
+        return [self._end_message(s, result, "gap_watch") for s, result in ended]
 
     def reset(self, session_id: str) -> None:
         with self._lock:

@@ -38,8 +38,11 @@ ONE_EURO_MIN_CUTOFF = _float("ONE_EURO_MIN_CUTOFF", 1.0)  # 낮을수록 천천�
 ONE_EURO_BETA = _float("ONE_EURO_BETA", 10.0)  # 높을수록 빠르게 움직일 때 덜 늦게 따라옴
 ONE_EURO_D_CUTOFF = _float("ONE_EURO_D_CUTOFF", 1.0)
 
-# MQTT (gateway와 같은 방식)
+# MQTT (gateway와 같은 방식). MQTT_ENABLED=false면 MQTT 입력과 발행이 모두 꺼진다.
 MQTT_ENABLED = _bool("MQTT_ENABLED", True)
+# 입력 방식. 둘 다 켜 두면 vision이 어느 쪽으로 보내도 받는다.
+MQTT_INPUT_ENABLED = _bool("MQTT_INPUT_ENABLED", True)  # {prefix}/landmarks/+ 구독
+WS_INPUT_ENABLED = _bool("WS_INPUT_ENABLED", True)  # ws://<host>:8002/ws/landmarks
 MQTT_HOST = os.getenv("MQTT_HOST", "hgw-mqtt")
 MQTT_PORT = _int("MQTT_PORT", 1883)
 MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "hgw/v1").strip("/")

@@ -1,6 +1,6 @@
 """MQTT 입출력.
 
-구독: {prefix}/landmarks/+   (vision → gesture)
+구독: {prefix}/landmarks/+   (vision → gesture, MQTT_INPUT_ENABLED=true일 때)
 발행: {prefix}/gestures/{session_id}   (gesture → canvas)
 QoS 0, retain 없음. paho가 자기 스레드에서 수신 콜백을 차례로 부르므로 같은 연결의 메시지 순서가 지켜진다.
 """
@@ -12,7 +12,6 @@ import uuid
 import paho.mqtt.client as mqtt
 
 from . import config
-from .adapter import MessageError, decode, to_landmark_message
 from .logs import log_json
 from .processor import GestureProcessor
 
@@ -26,11 +25,13 @@ class MqttBridge:
         host: str = config.MQTT_HOST,
         port: int = config.MQTT_PORT,
         prefix: str = config.MQTT_TOPIC_PREFIX,
+        subscribe: bool = config.MQTT_INPUT_ENABLED,
         client=None,
     ):
         self.processor = processor
         self.host = host
         self.port = port
+        self.subscribe = subscribe
         self.in_topic = f"{prefix}/landmarks/+"
         self.out_prefix = f"{prefix}/gestures"
         self.connected = False
@@ -53,7 +54,8 @@ class MqttBridge:
         self._stop.clear()
         self._watcher = threading.Thread(target=self._watch_gaps, name="gesture-gap-watch", daemon=True)
         self._watcher.start()
-        log_json(event="mqtt_start", host=self.host, port=self.port, subscribe=self.in_topic)
+        log_json(event="mqtt_start", host=self.host, port=self.port,
+                 subscribe=self.in_topic if self.subscribe else None)
 
     def stop(self) -> None:
         self._stop.set()
@@ -70,8 +72,10 @@ class MqttBridge:
             log_json(logging.WARNING, event="mqtt_connect_failed", reason=str(reason))
             return
         self.connected = True
-        client.subscribe(self.in_topic, qos=0)  # 재연결할 때마다 다시 구독
-        log_json(event="mqtt_connected", host=self.host, port=self.port, subscribe=self.in_topic)
+        if self.subscribe:
+            client.subscribe(self.in_topic, qos=0)  # 재연결할 때마다 다시 구독
+        log_json(event="mqtt_connected", host=self.host, port=self.port,
+                 subscribe=self.in_topic if self.subscribe else None)
 
     def _on_disconnect(self, client, userdata, flags, reason, properties):
         self.connected = False
@@ -85,16 +89,12 @@ class MqttBridge:
     def handle_payload(self, topic: str, payload: bytes) -> None:
         """잘못된 메시지는 로그만 남기고 건너뛴다."""
         try:
-            msg = to_landmark_message(decode(payload))
-            out = self.processor.process(msg, source="mqtt")
-        except MessageError as exc:
-            log_json(logging.ERROR, event="invalid_message", topic=topic, code=exc.code, error=str(exc))
-            return
+            out = self.processor.process_payload(payload, source="mqtt", origin=topic)
         except Exception:
-            log_json(logging.ERROR, event="process_failed", topic=topic)
-            logging.getLogger(config.SERVICE_NAME).exception("process failed")
+            logging.getLogger(config.SERVICE_NAME).exception("process failed (topic=%s)", topic)
             return
-        self.publish(out)
+        if out is not None:
+            self.publish(out)
 
     def publish(self, gesture_message: dict) -> None:
         topic = f"{self.out_prefix}/{gesture_message['session_id']}"

@@ -3,7 +3,7 @@
 | 항목 | 값 |
 |---|---|
 | Port | `8002` (internal only, HTTP는 확인·테스트용) |
-| 입력 | MQTT 구독 `{prefix}/landmarks/+` |
+| 입력 | MQTT 구독 `{prefix}/landmarks/+` **또는** WebSocket `ws://gesture:8002/ws/landmarks` (둘 다 켜 둘 수 있음) |
 | 출력 | MQTT 발행 `{prefix}/gestures/{session_id}` — [`gesture.schema.json`](../../shared/contracts/gesture.schema.json) |
 | QoS / retain | 0 / 없음 |
 | Dependencies | fastapi, uvicorn, paho-mqtt |
@@ -14,6 +14,20 @@
 - 현재 구현: `IDLE`, `DRAW_START`, `DRAW_MOVE`, `DRAW_END` (검지 하나로 그리기)
 - Debounce, pointer smoothing (One-Euro), `gesture_ms` 측정
 - 메시지가 `SESSION_GAP_MS` 동안 끊기면 그리던 획에 `DRAW_END` 발행
+
+## 입력 방식 (두 가지, 출력은 항상 MQTT)
+
+| 방식 | 주소 | 켜고 끄기 | 비고 |
+|---|---|---|---|
+| MQTT | 구독 `{prefix}/landmarks/+` | `MQTT_INPUT_ENABLED` (기본 `true`) | vision이 MQTT로 바뀐 뒤의 경로 |
+| WebSocket | `ws://<host>:8002/ws/landmarks` | `WS_INPUT_ENABLED` (기본 `true`) | **현재 vision 코드의 경로** (`GESTURE_WS_URL`). C가 서버, vision이 client |
+
+- 두 방식 모두 같은 어댑터와 처리 함수를 쓰고, 결과는 `{prefix}/gestures/{session_id}`로 MQTT 발행한다.
+- WebSocket은 **단방향**: 텍스트 메시지 1개 = 프레임 1개, C는 응답을 보내지 않는다. 받은 순서대로 하나씩 처리한다.
+- 잘못된 메시지는 에러 로그(`invalid_message`)만 남기고 건너뛴다. 연결은 끊지 않는다.
+- WebSocket 연결이 끊기면 그 연결로 들어온 세션 중 그리는 중이던 세션에 `DRAW_END`를 발행한다.
+  끊김 감시(`SESSION_GAP_MS`)와 겹쳐도 `DRAW_END`는 한 번만 나간다.
+- `MQTT_ENABLED=false`면 MQTT 입력과 발행이 모두 꺼진다. WebSocket으로 받은 결과는 로그만 남는다.
 
 ## 입력 형식 (둘 다 받음)
 
@@ -36,7 +50,9 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 
 | 이름 | 기본값 | 설명 |
 |---|---|---|
-| `MQTT_ENABLED` | `true` | `false`면 MQTT 없이 HTTP만 동작 |
+| `MQTT_ENABLED` | `true` | `false`면 MQTT 입력·발행 모두 끔 (HTTP·WS 입력만, 결과는 로그) |
+| `MQTT_INPUT_ENABLED` | `true` | `{prefix}/landmarks/+` 구독 여부 |
+| `WS_INPUT_ENABLED` | `true` | `/ws/landmarks` 엔드포인트 사용 여부 |
 | `MQTT_HOST` | `hgw-mqtt` | 로컬 실행 시 `localhost` |
 | `MQTT_PORT` | `1883` | 로컬 실행 시 `11883` |
 | `MQTT_TOPIC_PREFIX` | `hgw/v1` | |
@@ -110,6 +126,7 @@ while true; do .venv/Scripts/python dev/send_sequence.py dev-01 --mqtt; done
    ```bash
    .venv/Scripts/python dev/send_sequence.py dev-01 --mqtt              # vision 형식 (기본)
    .venv/Scripts/python dev/send_sequence.py dev-01 --mqtt --format repo
+   .venv/Scripts/python dev/send_sequence.py dev-01 --ws                # WebSocket (현재 vision과 같은 경로)
    .venv/Scripts/python dev/send_sequence.py dev-01 --http              # MQTT 없이 /v1/classify로
    ```
 

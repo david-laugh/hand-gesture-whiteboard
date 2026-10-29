@@ -2,6 +2,8 @@
 
     # MQTT로 발행 (기본: localhost:11883, hgw/v1/landmarks/{session_id})
     python dev/send_sequence.py dev-01
+    # WebSocket /ws/landmarks 로 보내기 (vision과 같은 방식, 결과는 C가 MQTT로 발행)
+    python dev/send_sequence.py dev-01 --ws
     # HTTP /v1/classify 로 보내고 응답 출력
     python dev/send_sequence.py dev-01 --http --url http://localhost:8002
     # 레포 LandmarkMessage 형식으로 보내기 (기본은 vision 자체 형식)
@@ -132,6 +134,19 @@ def send_mqtt(args) -> None:
     print(f"{count} frames sent")
 
 
+def send_ws(args) -> None:
+    from websockets.sync.client import connect  # uvicorn[standard]에 포함
+
+    print(f"send → {args.ws_url} ({args.format} format, {args.fps} fps)")
+    count = 0
+    with connect(args.ws_url, open_timeout=3) as ws:
+        for label, msg in paced(args):
+            ws.send(json.dumps(msg, separators=(",", ":")))  # 텍스트 메시지 1개 = 프레임 1개
+            count += 1
+            print(f"{msg['frame_id']:4d} {label}")
+    print(f"{count} frames sent")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("session_id", nargs="?", default="dev-01")
@@ -139,13 +154,20 @@ def main() -> None:
     p.add_argument("--format", choices=["vision", "repo"], default="vision")
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--mqtt", action="store_true", help="MQTT로 발행 (기본)")
+    mode.add_argument("--ws", action="store_true", help="WebSocket /ws/landmarks 로 전송")
     mode.add_argument("--http", action="store_true", help="HTTP /v1/classify 로 전송")
     p.add_argument("--host", default="localhost")
     p.add_argument("--port", type=int, default=11883)
     p.add_argument("--prefix", default="hgw/v1")
     p.add_argument("--url", default="http://localhost:8002")
+    p.add_argument("--ws-url", default="ws://localhost:8002/ws/landmarks")
     args = p.parse_args()
-    send_http(args) if args.http else send_mqtt(args)
+    if args.http:
+        send_http(args)
+    elif args.ws:
+        send_ws(args)
+    else:
+        send_mqtt(args)
 
 
 if __name__ == "__main__":
