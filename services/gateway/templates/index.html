@@ -14,9 +14,12 @@
       <label>FPS <select id="fps"><option>10</option><option>15</option><option selected>20</option><option>30</option></select></label>
       <label>해상도 <select id="width"><option>640</option><option selected>960</option><option>1280</option></select></label>
       <label>화질 <select id="quality"><option value="0.5">낮음</option><option value="0.7" selected>보통</option><option value="0.85">높음</option></select></label>
+      <label>회전 보정 <select id="rotation"><option value="auto" selected>자동</option><option value="0">0°</option><option value="90">90°</option><option value="180">180°</option><option value="270">270°</option></select></label>
+      <label><input type="checkbox" id="tilt" checked> 대각 보정</label>
     </div>
     <button id="toggle">촬영 시작</button>
     <p id="status" class="off" role="status">연결 대기 중</p>
+    <p id="orientation"></p>
     <p id="message"></p>
   </main>
 </body>
