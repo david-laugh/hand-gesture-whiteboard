@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0.0",
+  "message_type": "gesture",
+  "trace_id": "7f3c2a9e-4b1d-4e8a-9c6f-2d5e8b1a0c37",
+  "session_id": "sess-01",
+  "frame_id": 1042,
+  "timestamp_ms": 1793260800141,
+  "gesture": "DRAW_MOVE",
+  "pointer": { "x": 0.455, "y": 0.410 },
+  "confidence": 0.92,
+  "hand_index": 0,
+  "params": {
+    "stroke_id": "stk-0017",
+    "state_frames": 12
+  },
+  "gesture_ms": 0.6
+}

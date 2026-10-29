@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hand-gesture-whiteboard.local/contracts/gesture.schema.json",
+  "title": "GestureMessage",
+  "description": "gesture → gateway (and gateway → canvas). Semantic command produced by the gesture state machine from one LandmarkMessage. Contains NO image or raw landmark data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "message_type",
+    "trace_id",
+    "session_id",
+    "frame_id",
+    "timestamp_ms",
+    "gesture",
+    "pointer",
+    "confidence",
+    "params",
+    "gesture_ms"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "#/$defs/schema_version" },
+    "message_type": { "const": "gesture" },
+    "trace_id": { "$ref": "#/$defs/trace_id" },
+    "session_id": { "$ref": "#/$defs/session_id" },
+    "frame_id": { "$ref": "#/$defs/frame_id" },
+    "timestamp_ms": { "$ref": "#/$defs/timestamp_ms" },
+    "gesture": {
+      "description": "Semantic command. See docs/gesture-spec.md for state transitions.",
+      "type": "string",
+      "enum": [
+        "IDLE",
+        "DRAW_START",
+        "DRAW_MOVE",
+        "DRAW_END",
+        "ERASE_START",
+        "ERASE_MOVE",
+        "ERASE_END",
+        "ZOOM_START",
+        "ZOOM_UPDATE",
+        "ZOOM_END",
+        "UNDO",
+        "REDO",
+        "CLEAR"
+      ]
+    },
+    "pointer": {
+      "description": "Normalized pointer position in [0,1] image space (e.g. index fingertip). null when not applicable (IDLE without hand, UNDO, REDO, CLEAR).",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "number", "minimum": 0, "maximum": 1 },
+            "y": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      ]
+    },
+    "confidence": {
+      "description": "Confidence of the gesture classification.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "hand_index": {
+      "description": "Index of the hand (in LandmarkMessage.hands) that produced this command.",
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "params": {
+      "description": "Gesture-specific parameters. Use {} when none.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stroke_id": {
+          "description": "Identifier shared by *_START/*_MOVE/*_END of the same stroke.",
+          "type": "string"
+        },
+        "zoom_scale": {
+          "description": "Absolute zoom scale relative to ZOOM_START (1.0 = unchanged).",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "zoom_center": {
+          "description": "Normalized zoom anchor point.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["x", "y"],
+          "properties": {
+            "x": { "type": "number", "minimum": 0, "maximum": 1 },
+            "y": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "eraser_radius": {
+          "description": "Eraser radius in normalized units.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "color": {
+          "description": "(Stretch) brush color, #RRGGBB.",
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "brush_size": {
+          "description": "(Stretch) brush width in canvas pixels.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "state_frames": {
+          "description": "Number of consecutive frames the current state has been held (debounce debug).",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "gesture_ms": {
+      "description": "Processing time inside gesture service (ms).",
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "frame_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

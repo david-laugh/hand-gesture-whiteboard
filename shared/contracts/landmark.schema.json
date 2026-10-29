@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hand-gesture-whiteboard.local/contracts/landmark.schema.json",
+  "title": "LandmarkMessage",
+  "description": "vision → gateway (and gateway → gesture, gateway → browser for skeleton overlay). MediaPipe Hand Landmarker result for one frame. Contains NO image data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "message_type",
+    "trace_id",
+    "session_id",
+    "frame_id",
+    "timestamp_ms",
+    "image_width",
+    "image_height",
+    "hands",
+    "vision_ms"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "#/$defs/schema_version" },
+    "message_type": { "const": "landmarks" },
+    "trace_id": { "$ref": "#/$defs/trace_id" },
+    "session_id": { "$ref": "#/$defs/session_id" },
+    "frame_id": { "$ref": "#/$defs/frame_id" },
+    "timestamp_ms": { "$ref": "#/$defs/timestamp_ms" },
+    "image_width": {
+      "description": "Width of the source frame (to de-normalize coordinates).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "image_height": {
+      "description": "Height of the source frame (to de-normalize coordinates).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "hands": {
+      "description": "Detected hands. Empty array when no hand is detected.",
+      "type": "array",
+      "maxItems": 2,
+      "items": { "$ref": "#/$defs/hand" }
+    },
+    "vision_ms": {
+      "description": "Processing time inside vision: JPEG decode + inference + serialization (ms).",
+      "type": "number",
+      "minimum": 0
+    },
+    "model": {
+      "description": "Optional model identifier, e.g. 'hand_landmarker.task@float16'.",
+      "type": "string"
+    }
+  },
+  "$defs": {
+    "hand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hand_index", "handedness", "confidence", "landmarks"],
+      "properties": {
+        "hand_index": {
+          "description": "Index of the hand within this frame (0-based).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "handedness": {
+          "description": "Handedness as reported by MediaPipe. NOTE: depends on whether the image is mirrored.",
+          "type": "string",
+          "enum": ["Left", "Right"]
+        },
+        "confidence": {
+          "description": "Handedness classification score.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "landmarks": {
+          "description": "Exactly 21 landmarks, ordered by id (0 = WRIST … 20 = PINKY_TIP).",
+          "type": "array",
+          "minItems": 21,
+          "maxItems": 21,
+          "items": { "$ref": "#/$defs/landmark" }
+        }
+      }
+    },
+    "landmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "x", "y", "z"],
+      "properties": {
+        "id": {
+          "description": "MediaPipe hand landmark index (0-20).",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "x": {
+          "description": "Normalized x in [0,1] relative to image width. May slightly exceed bounds when the hand is partly out of frame.",
+          "type": "number"
+        },
+        "y": {
+          "description": "Normalized y in [0,1] relative to image height. May slightly exceed bounds.",
+          "type": "number"
+        },
+        "z": {
+          "description": "Relative depth with the wrist as origin; smaller = closer to camera. Same scale as x.",
+          "type": "number"
+        }
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "frame_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

@@ -1,0 +1,6 @@
+# vision — planned dependencies (no application code yet)
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+mediapipe>=0.10.14
+numpy>=1.26
+opencv-python-headless>=4.9

@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0.0",
+  "message_type": "canvas",
+  "trace_id": "7f3c2a9e-4b1d-4e8a-9c6f-2d5e8b1a0c37",
+  "session_id": "sess-01",
+  "frame_id": 1042,
+  "timestamp_ms": 1793260800144,
+  "sequence": 388,
+  "operations": [
+    {
+      "type": "stroke_append",
+      "stroke_id": "stk-0017",
+      "points": [
+        { "x": 582.4, "y": 295.2 }
+      ],
+      "style": { "color": "#1E1E1E", "width": 4 }
+    }
+  ],
+  "history": { "undo_depth": 16, "redo_depth": 0 },
+  "canvas_ms": 0.9
+}

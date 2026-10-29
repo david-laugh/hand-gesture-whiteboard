@@ -1,0 +1,4 @@
+# canvas — planned dependencies (no application code yet)
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+pillow>=10.4

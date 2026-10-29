@@ -1,0 +1,106 @@
+# hand-gesture-whiteboard — development compose
+#
+# Scaffold 단계: 각 container는 애플리케이션 코드 없이 `sleep infinity`로 유지된다.
+# 실제 서비스 구현 후 각 service의 `command`를 uvicorn 실행 명령으로 교체한다.
+#
+# Port plan (container internal):
+#   gateway 8000 (host 노출) / vision 8001 / gesture 8002 / canvas 8003
+
+name: hand-gesture-whiteboard
+
+x-common: &common
+  restart: unless-stopped
+  networks:
+    - hand-net
+  init: true
+  environment: &common-env
+    PYTHONUNBUFFERED: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+    SCHEMA_VERSION: ${SCHEMA_VERSION:-1.0.0}
+
+services:
+  gateway:
+    <<: *common
+    build:
+      context: ./services/gateway
+    image: hand-gesture-whiteboard/gateway:dev
+    container_name: hgw-gateway
+    environment:
+      <<: *common-env
+      SERVICE_NAME: gateway
+      SERVICE_PORT: "8000"
+      VISION_URL: ${VISION_URL:-http://vision:8001}
+      GESTURE_URL: ${GESTURE_URL:-http://gesture:8002}
+      CANVAS_URL: ${CANVAS_URL:-http://canvas:8003}
+    ports:
+      - "${GATEWAY_HOST_PORT:-8000}:8000"
+    volumes:
+      - ./services/gateway:/app
+      - ./shared:/shared:ro
+    depends_on:
+      - vision
+      - gesture
+      - canvas
+    # TODO: 구현 후 교체 → ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    command: ["sleep", "infinity"]
+
+  vision:
+    <<: *common
+    build:
+      context: ./services/vision
+    image: hand-gesture-whiteboard/vision:dev
+    container_name: hgw-vision
+    environment:
+      <<: *common-env
+      SERVICE_NAME: vision
+      SERVICE_PORT: "8001"
+      MODEL_PATH: ${VISION_MODEL_PATH:-/app/models/hand_landmarker.task}
+      MAX_NUM_HANDS: ${VISION_MAX_NUM_HANDS:-2}
+    expose:
+      - "8001"
+    volumes:
+      - ./services/vision:/app
+      - ./shared:/shared:ro
+    command: ["sleep", "infinity"]
+
+  gesture:
+    <<: *common
+    build:
+      context: ./services/gesture
+    image: hand-gesture-whiteboard/gesture:dev
+    container_name: hgw-gesture
+    environment:
+      <<: *common-env
+      SERVICE_NAME: gesture
+      SERVICE_PORT: "8002"
+    expose:
+      - "8002"
+    volumes:
+      - ./services/gesture:/app
+      - ./shared:/shared:ro
+    command: ["sleep", "infinity"]
+
+  canvas:
+    <<: *common
+    build:
+      context: ./services/canvas
+    image: hand-gesture-whiteboard/canvas:dev
+    container_name: hgw-canvas
+    environment:
+      <<: *common-env
+      SERVICE_NAME: canvas
+      SERVICE_PORT: "8003"
+      CANVAS_WIDTH: ${CANVAS_WIDTH:-1280}
+      CANVAS_HEIGHT: ${CANVAS_HEIGHT:-720}
+    expose:
+      - "8003"
+    volumes:
+      - ./services/canvas:/app
+      - ./shared:/shared:ro
+    command: ["sleep", "infinity"]
+
+networks:
+  hand-net:
+    name: hand-net
+    driver: bridge

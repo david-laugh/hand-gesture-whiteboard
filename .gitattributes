@@ -1,0 +1,5 @@
+# Normalize line endings: files are bind-mounted into Linux containers
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.task binary

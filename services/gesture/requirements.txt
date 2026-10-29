@@ -1,0 +1,4 @@
+# gesture — planned dependencies (no application code yet)
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.30
+numpy>=1.26

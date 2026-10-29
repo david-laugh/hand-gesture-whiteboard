@@ -1,0 +1,30 @@
+# Environment
+.env
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Model binaries (download separately; see services/vision/README.md)
+services/vision/models/*
+!services/vision/models/.gitkeep
+
+# Benchmark / runtime outputs
+benchmarks/results/
+*.log
+exports/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

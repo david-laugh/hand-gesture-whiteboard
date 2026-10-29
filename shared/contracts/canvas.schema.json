@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hand-gesture-whiteboard.local/contracts/canvas.schema.json",
+  "title": "CanvasMessage",
+  "description": "canvas → gateway → browser. Ordered list of rendering operations produced from one GestureMessage. The browser applies operations strictly in `sequence` order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "message_type",
+    "trace_id",
+    "session_id",
+    "frame_id",
+    "timestamp_ms",
+    "sequence",
+    "operations",
+    "canvas_ms"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "#/$defs/schema_version" },
+    "message_type": { "const": "canvas" },
+    "trace_id": { "$ref": "#/$defs/trace_id" },
+    "session_id": { "$ref": "#/$defs/session_id" },
+    "frame_id": { "$ref": "#/$defs/frame_id" },
+    "timestamp_ms": { "$ref": "#/$defs/timestamp_ms" },
+    "sequence": {
+      "description": "Per-session monotonically increasing canvas state sequence number. Browser detects gaps and may request a full resync.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "operations": {
+      "description": "Operations to apply. Empty array for no-op (e.g. IDLE).",
+      "type": "array",
+      "items": { "$ref": "#/$defs/operation" }
+    },
+    "history": {
+      "description": "Undo/redo stack sizes after applying operations (for UI state).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["undo_depth", "redo_depth"],
+      "properties": {
+        "undo_depth": { "type": "integer", "minimum": 0 },
+        "redo_depth": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "canvas_ms": {
+      "description": "Processing time inside canvas service (ms).",
+      "type": "number",
+      "minimum": 0
+    }
+  },
+  "$defs": {
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "description": "Operation type.",
+          "type": "string",
+          "enum": [
+            "stroke_begin",
+            "stroke_append",
+            "stroke_end",
+            "erase_begin",
+            "erase_append",
+            "erase_end",
+            "remove_stroke",
+            "restore_stroke",
+            "set_view",
+            "clear",
+            "noop"
+          ]
+        },
+        "stroke_id": {
+          "description": "Target stroke (stroke_*, erase_*, remove_stroke, restore_stroke).",
+          "type": "string"
+        },
+        "points": {
+          "description": "Coordinates in canvas pixel space (after view transform).",
+          "type": "array",
+          "items": { "$ref": "#/$defs/point" }
+        },
+        "style": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "width": { "type": "number", "exclusiveMinimum": 0 }
+          }
+        },
+        "view": {
+          "description": "Viewport transform for set_view.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["scale", "offset"],
+          "properties": {
+            "scale": { "type": "number", "exclusiveMinimum": 0 },
+            "offset": { "$ref": "#/$defs/point" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["stroke_begin", "stroke_append", "erase_begin", "erase_append"] } } },
+          "then": { "required": ["stroke_id", "points"] }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["stroke_end", "erase_end", "remove_stroke", "restore_stroke"] } } },
+          "then": { "required": ["stroke_id"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "set_view" } } },
+          "then": { "required": ["view"] }
+        }
+      ]
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "trace_id": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "frame_id": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_ms": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

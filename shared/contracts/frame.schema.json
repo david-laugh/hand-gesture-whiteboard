@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hand-gesture-whiteboard.local/contracts/frame.schema.json",
+  "title": "FrameMessage",
+  "description": "gateway → vision. Metadata for one webcam frame. The JPEG bytes themselves are NOT embedded in this JSON: they travel as a separate binary part (Content-Type: image/jpeg). See docs/api-contract.md §Frame transport. This is the ONLY message in the system that is accompanied by image data.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "message_type",
+    "trace_id",
+    "session_id",
+    "frame_id",
+    "timestamp_ms",
+    "content_type",
+    "width",
+    "height",
+    "captured_at_ms",
+    "byte_length"
+  ],
+  "properties": {
+    "schema_version": { "$ref": "#/$defs/schema_version" },
+    "message_type": { "const": "frame" },
+    "trace_id": { "$ref": "#/$defs/trace_id" },
+    "session_id": { "$ref": "#/$defs/session_id" },
+    "frame_id": { "$ref": "#/$defs/frame_id" },
+    "timestamp_ms": { "$ref": "#/$defs/timestamp_ms" },
+    "content_type": {
+      "description": "MIME type of the accompanying binary payload.",
+      "const": "image/jpeg"
+    },
+    "width": {
+      "description": "Frame width in pixels.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096
+    },
+    "height": {
+      "description": "Frame height in pixels.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4096
+    },
+    "captured_at_ms": {
+      "description": "Unix epoch ms when the browser captured the frame (browser clock). Used as the start point of e2e_ms.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "received_at_ms": {
+      "description": "Unix epoch ms when gateway received the frame over WebSocket (gateway clock).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "byte_length": {
+      "description": "Size of the JPEG payload in bytes (payload size metric).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "jpeg_quality": {
+      "description": "Encoder quality used by the browser (0-100), if known.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "mirrored": {
+      "description": "True if the browser horizontally flipped the image before encoding (selfie view).",
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "$defs": {
+    "schema_version": {
+      "description": "Contract version (semver). Major mismatch must be rejected.",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "trace_id": {
+      "description": "Per-frame trace identifier issued by gateway (UUID recommended). Preserved unchanged by every service.",
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "session_id": {
+      "description": "Browser WebSocket session identifier issued by gateway.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "frame_id": {
+      "description": "Monotonically increasing frame counter within a session (starts at 0).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "timestamp_ms": {
+      "description": "Unix epoch ms when THIS message was created by its producer.",
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
