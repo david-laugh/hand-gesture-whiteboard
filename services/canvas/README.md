@@ -53,7 +53,7 @@ docker run -d --name hgw-canvas --network hgw-net -p 8003:8003 -e MQTT_HOST=hgw-
 
 `session_id`는 하나의 독립된 그림 상태를 구분하는 이름입니다. URL에 없으면 `default`를 사용하므로 `http://localhost:8003/`와 `http://localhost:8003/?session_id=default`는 같은 그림판입니다. `?session_id=team-a`처럼 다른 값을 쓰면 MQTT topic, stroke history, 화면 snapshot이 `team-a` 전용으로 분리됩니다. 같은 ID를 연 여러 브라우저는 동일한 그림을 실시간으로 봅니다.
 
-그림판은 **펜 굵기**와 **지우개 굵기**를 각각 독립적으로 기억합니다. 기본값은 펜 8px, 지우개 30px이며 각 슬라이더를 조절해도 다른 도구의 값은 바뀌지 않습니다. 마우스/터치가 canvas 위에 있으면 현재 선택한 도구의 굵기와 같은 크기의 원형 포인터가 보입니다. 지우개는 반투명 채움·점선 테두리·내부 원으로 현재 지워질 영역을 표시하며, 이 원의 지름이 실제 erase operation 폭과 같습니다. 지우개로 **한 번 클릭**하면 그 원형 영역을 즉시 지우고, 드래그하면 같은 폭으로 연속해서 지웁니다. 이 UI에서 직접 그리면 browser는 `/ws/control`으로 gesture를 보내고, Canvas는 이를 `{prefix}/gestures/{session_id}` MQTT topic에 발행합니다. Canvas가 같은 topic을 구독해 처리한 뒤 `{prefix}/canvas/{session_id}` 결과를 다시 그림판에 전달하므로, UI 테스트와 실제 C(Gesture) 입력은 같은 MQTT 처리 경로를 사용합니다.
+그림판은 **펜 굵기**와 **지우개 굵기**를 각각 독립적으로 기억합니다. 기본값은 펜 8px, 지우개 30px이며 각 슬라이더를 조절해도 다른 도구의 값은 바뀌지 않습니다. 펜 색상은 기본 8색 팔레트, 브라우저 색상 맵, `#RRGGBB` HEX 직접 입력으로 지정할 수 있고 세 입력은 동기화됩니다. 잘못된 HEX는 적용하지 않고 이전 유효 색상을 유지합니다. 마우스/터치가 canvas 위에 있으면 현재 선택한 도구의 굵기와 같은 크기의 원형 포인터가 보입니다. 지우개는 반투명 채움·점선 테두리·내부 원으로 현재 지워질 영역을 표시하며, 이 원의 지름이 실제 erase operation 폭과 같습니다. 지우개로 **한 번 클릭**하면 그 원형 영역을 즉시 지우고, 드래그하면 같은 폭으로 연속해서 지웁니다. 이 UI에서 직접 그리면 browser는 `/ws/control`으로 gesture를 보내고, Canvas는 이를 `{prefix}/gestures/{session_id}` MQTT topic에 발행합니다. Canvas가 같은 topic을 구독해 처리한 뒤 `{prefix}/canvas/{session_id}` 결과를 다시 그림판에 전달하므로, UI 테스트와 실제 C(Gesture) 입력은 같은 MQTT 처리 경로를 사용합니다.
 
 ### 4. 실행 상태 확인
 
@@ -150,7 +150,7 @@ Canvas는 C가 보낸 normalized `pointer` `{x: 0..1, y: 0..1}`를 고정된 `12
 
 `/ws/board`는 새 browser가 접속해도 기존 session의 visible stroke를 snapshot으로 보내므로, 화면을 새로 열어도 현재 그림을 볼 수 있습니다.
 
-`/ws/control`은 개발·현장 점검을 위한 UI 입력 경로입니다. 펜은 `brush_size`, 지우개는 `eraser_radius`로 각자 선택한 굵기를 동일한 MQTT gesture topic에 발행하므로 C 연동 전에도 D의 MQTT 처리 경로를 확인할 수 있습니다. 운영 클라이언트가 직접 gesture를 발행할 권한을 가질지는 broker ACL로 제한해야 합니다.
+`/ws/control`은 개발·현장 점검을 위한 UI 입력 경로입니다. 펜은 `brush_size`와 `color`(`#RRGGBB`), 지우개는 `eraser_radius`로 각자 선택한 설정을 동일한 MQTT gesture topic에 발행하므로 C 연동 전에도 D의 MQTT 처리 경로를 확인할 수 있습니다. 운영 클라이언트가 직접 gesture를 발행할 권한을 가질지는 broker ACL로 제한해야 합니다.
 
 ## HTTP endpoint
 

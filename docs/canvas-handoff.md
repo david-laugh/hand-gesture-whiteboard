@@ -139,4 +139,4 @@ PYTHONPATH=services/canvas python -m unittest discover -s services/canvas/tests 
 
 ## UI 굵기 동작 규칙
 
-펜과 지우개는 서로 다른 굵기 값을 보존한다. UI는 펜 stroke에 `params.brush_size`를 px 단위로, 지우개 stroke에 `params.eraser_radius`를 normalized radius로 전송한다. Canvas는 지우개 radius를 고정 canvas 기준 px 폭으로 환산한다. 따라서 C가 같은 느낌의 지우개를 구현하려면 `eraser_radius = 원하는_폭_px / (2 × min(CANVAS_WIDTH, CANVAS_HEIGHT))` 공식을 사용한다. 지우개 `ERASE_START`만으로도 단일 원형 erase operation이 생성되므로, 클릭 한 번은 그 영역을 즉시 지우며 드래그는 이어지는 `ERASE_MOVE`로 확장된다. 현재 UI의 반투명 점선 원은 선택한 도구의 실제 적용 폭을 표시한다.
+펜과 지우개는 서로 다른 굵기 값을 보존한다. UI는 펜 stroke에 `params.brush_size`와 `params.color`(`#RRGGBB`)를, 지우개 stroke에 `params.eraser_radius`를 normalized radius로 전송한다. 펜 색상은 팔레트·색상 맵·HEX 입력으로 설정되며 세 UI는 동일한 유효 HEX 값을 유지한다. Canvas는 지우개 radius를 고정 canvas 기준 px 폭으로 환산한다. 따라서 C가 같은 느낌의 지우개를 구현하려면 `eraser_radius = 원하는_폭_px / (2 × min(CANVAS_WIDTH, CANVAS_HEIGHT))` 공식을 사용한다. 지우개 `ERASE_START`만으로도 단일 원형 erase operation이 생성되므로, 클릭 한 번은 그 영역을 즉시 지우며 드래그는 이어지는 `ERASE_MOVE`로 확장된다. 현재 UI의 반투명 점선 원은 선택한 도구의 실제 적용 폭을 표시한다.

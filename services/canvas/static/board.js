@@ -7,6 +7,10 @@ let controlSocket, tool = 'pen', strokeId, drawing = false;
 const cursor = document.getElementById('cursor');
 const penSize = document.getElementById('pen-size');
 const eraserSize = document.getElementById('eraser-size');
+const penColorPicker = document.getElementById('pen-color-picker');
+const penColorHex = document.getElementById('pen-color-hex');
+const colorPreview = document.getElementById('color-preview');
+let penColor = '#172554';
 
 function activeSize() { return Number(tool === 'pen' ? penSize.value : eraserSize.value); }
 
@@ -15,6 +19,24 @@ function selectTool(nextTool) {
   document.getElementById('pen').classList.toggle('selected', tool === 'pen');
   document.getElementById('eraser').classList.toggle('selected', tool === 'eraser');
   document.querySelector('.tools').dataset.tool = tool;
+}
+
+function normaliseHex(value) {
+  const hex = value.trim();
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toUpperCase() : null;
+}
+
+function setPenColor(value) {
+  const color = normaliseHex(value);
+  if (!color) return false;
+  penColor = color;
+  penColorPicker.value = color;
+  penColorHex.value = color;
+  colorPreview.style.backgroundColor = color;
+  for (const swatch of document.querySelectorAll('.color-swatch')) {
+    swatch.classList.toggle('selected', swatch.dataset.color.toUpperCase() === color);
+  }
+  return true;
 }
 
 function draw() {
@@ -74,7 +96,7 @@ function updateCursor(event) {
 
 function drawingParams() {
   const size = activeSize();
-  return tool === 'pen' ? {stroke_id: strokeId, color: '#172554', brush_size: size} : {stroke_id: strokeId, eraser_radius: size / (Math.min(board.width, board.height) * 2)};
+  return tool === 'pen' ? {stroke_id: strokeId, color: penColor, brush_size: size} : {stroke_id: strokeId, eraser_radius: size / (Math.min(board.width, board.height) * 2)};
 }
 
 function sendDraw(command, event) {
@@ -92,6 +114,13 @@ document.getElementById('pen').onclick = () => selectTool('pen');
 document.getElementById('eraser').onclick = () => selectTool('eraser');
 penSize.oninput = event => { document.getElementById('pen-size-value').textContent = `${event.target.value} px`; };
 eraserSize.oninput = event => { document.getElementById('eraser-size-value').textContent = `${event.target.value} px`; };
+penColorPicker.oninput = event => setPenColor(event.target.value);
+penColorHex.onchange = () => { if (!setPenColor(penColorHex.value)) penColorHex.value = penColor; };
+penColorHex.onkeydown = event => { if (event.key === 'Enter') { event.preventDefault(); penColorHex.blur(); } };
+for (const swatch of document.querySelectorAll('.color-swatch')) {
+  swatch.style.backgroundColor = swatch.dataset.color;
+  swatch.onclick = () => setPenColor(swatch.dataset.color);
+}
 board.addEventListener('pointerdown', event => { if (event.button !== 0) return; updateCursor(event); board.setPointerCapture(event.pointerId); drawing = true; strokeId = crypto.randomUUID(); sendDraw(tool === 'pen' ? 'DRAW_START' : 'ERASE_START', event); });
 board.addEventListener('pointermove', event => { updateCursor(event); if (drawing) sendDraw(tool === 'pen' ? 'DRAW_MOVE' : 'ERASE_MOVE', event); });
 board.addEventListener('pointerup', event => { if (!drawing) return; drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); });
@@ -100,3 +129,4 @@ board.addEventListener('pointerleave', () => { if (!drawing) cursor.style.displa
 connect();
 connectControls();
 selectTool('pen');
+setPenColor(penColor);
