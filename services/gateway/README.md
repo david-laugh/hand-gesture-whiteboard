@@ -33,7 +33,7 @@ docker run --rm --name hgw-gateway --network hgw-net -p 8000:8000 \
 cloudflared tunnel --url http://localhost:8000
 ```
 
-명령이 출력한 `https://…trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다. 페이지는 HTTPS일 때 자동으로 `wss://` WebSocket을 사용하므로 카메라 권한을 요청할 수 있습니다. Tunnel을 실행 중인 터미널을 종료하면 외부 주소도 닫힙니다. MQTT broker만 중지하고 싶다면 `docker stop hgw-mqtt`를 실행합니다.
+명령이 출력한 `https://…trycloudflare.com` 주소를 휴대폰 브라우저에서 엽니다. 대시보드의 QR 코드는 이 주소의 `/cam`을 가리키므로 휴대폰으로 바로 스캔할 수 있습니다. 페이지는 HTTPS일 때 자동으로 `wss://` WebSocket을 사용하므로 카메라 권한을 요청할 수 있습니다. Tunnel을 실행 중인 터미널을 종료하면 외부 주소도 닫힙니다. MQTT broker만 중지하고 싶다면 `docker stop hgw-mqtt`를 실행합니다.
 
 로컬 Python 실행도 가능합니다.
 
@@ -116,6 +116,7 @@ MQTT payload는 Browser WebSocket과 달리 metadata를 포함하는 binary pack
 | `MQTT_PORT` | `11883` | MQTT broker 포트. Docker network 안에서는 `1883` |
 | `MQTT_TOPIC_PREFIX` | `hgw/v1` | 발행 topic prefix. `+`, `#`, NUL 문자는 허용하지 않음 |
 | `SCHEMA_VERSION` | `1.0.0` | frame contract 버전 |
+| `GATEWAY_PUBLIC_URL` | 요청 URL | QR 코드가 가리킬 공개 주소. Tunnel 주소를 고정해 쓸 때 지정 |
 | `GATEWAY_TIMEOUT` | `3` | Browser로 JSON을 보낼 때의 timeout(초) |
 | `GATEWAY_MAX_FRAME_BYTES` | `2097152` | 허용할 최대 WebSocket binary 메시지 크기 |
 | `GATEWAY_MAX_SESSIONS` | `16` | 동시 WebSocket session 상한 |

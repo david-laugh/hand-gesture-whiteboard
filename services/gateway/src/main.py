@@ -1,13 +1,14 @@
 import asyncio
 from collections import Counter
 from contextlib import asynccontextmanager, suppress
+import io
 import json
 from pathlib import Path
 import time
 import uuid
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
@@ -44,9 +45,20 @@ def create_app(settings=None, transport=None):
     async def camera():
         return FileResponse(ROOT / "templates" / "index.html")
 
+    def camera_url(request):
+        base = settings.public_url or str(request.base_url).rstrip("/")
+        return f"{base}/cam"
+
     @app.get("/api/info")
-    async def info():
-        return {"camera_url": "/cam", "transport": "mqtt", "mqtt_connected": link.connected}
+    async def info(request: Request):
+        return {"camera_url": camera_url(request), "transport": "mqtt", "mqtt_connected": link.connected}
+
+    @app.get("/qr.png")
+    async def qr(request: Request):
+        import qrcode
+        output = io.BytesIO()
+        qrcode.make(camera_url(request), border=2, box_size=8).save(output, format="PNG")
+        return Response(output.getvalue(), media_type="image/png")
 
     @app.get("/healthz")
     async def health():

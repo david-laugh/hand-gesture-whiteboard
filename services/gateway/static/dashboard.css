@@ -10,3 +10,6 @@ h1 { margin: .35rem 0; font-size: clamp(2rem, 8vw, 3.25rem); }
 .ok { color: #5fae82; }.error { color: #e0644d; }
 dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin: 0; } dt { font-size: .8rem; color: #b6c0c3; } dd { margin: .25rem 0 0; font-size: 1.25rem; font-weight: 700; }
 .camera-link { display: block; padding: .9rem 1rem; border-radius: 6px; color: #1d2326; background: #c98a3c; text-align: center; text-decoration: none; font-weight: 700; }
+.qr-card { display: flex; gap: 1rem; align-items: center; padding: 1rem; border: 1px solid #3a4448; border-radius: 10px; background: #fff; color: #1d2326; }
+.qr-card img { width: 128px; height: 128px; image-rendering: pixelated; }.qr-card > div { flex: 1; min-width: 0; }.qr-card .label { color: #596163; }.url { margin: .5rem 0 0; font-size: .75rem; color: #596163; word-break: break-all; }
+@media (max-width: 400px) { .qr-card { align-items: flex-start; }.qr-card img { width: 96px; height: 96px; } }

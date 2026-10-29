@@ -11,6 +11,7 @@ class Settings:
     max_frame_bytes: int = 2 * 1024 * 1024
     max_sessions: int = 16
     schema_version: str = "1.0.0"
+    public_url: str = ""
 
     @classmethod
     def from_env(cls):
@@ -23,6 +24,7 @@ class Settings:
             max_frame_bytes=int(os.getenv("GATEWAY_MAX_FRAME_BYTES", defaults.max_frame_bytes)),
             max_sessions=int(os.getenv("GATEWAY_MAX_SESSIONS", defaults.max_sessions)),
             schema_version=os.getenv("SCHEMA_VERSION", defaults.schema_version),
+            public_url=os.getenv("GATEWAY_PUBLIC_URL", defaults.public_url).rstrip("/"),
         )
         if settings.timeout <= 0 or settings.max_sessions <= 0 or settings.max_frame_bytes <= 0:
             raise ValueError("Gateway limits must be positive")
