@@ -107,6 +107,19 @@ function showSaved(file) {
   if (file) { savedLink.textContent = `저장됨: ${file}`; savedLink.href = `/drawings/${encodeURIComponent(file)}`; }
 }
 
+// Gesture V-sign / palm choices arrive as 'tool' messages: mirror them on the palette and sliders.
+function setSlider(input, output, value) {
+  const clamped = Math.max(Number(input.min), Math.min(Number(input.max), Math.round(value)));
+  input.value = clamped;
+  document.getElementById(output).textContent = `${clamped} px`;
+}
+
+function applyTool(message) {
+  if (message.color) setPenColor(message.color);
+  if (message.brush_size) setSlider(penSize, 'pen-size-value', message.brush_size);
+  if (message.eraser_size) setSlider(eraserSize, 'eraser-size-value', message.eraser_size);
+}
+
 function switchSession(message) {
   const changed = message.session_id !== sessionId;
   sessionId = message.session_id; followLive = message.auto;
@@ -124,6 +137,7 @@ function connect() {
     if (message.session_id !== undefined && message.session_id !== sessionId) return;
     if (message.type === 'landmarks') { drawSkeleton(message.hands); return; }
     if (message.type === 'saved') { showSaved(message.file); return; }
+    if (message.type === 'tool') { applyTool(message); return; }
     if (message.type === 'session_end') { setStatus(false); clearSkeleton(); return; }
     if (message.type === 'snapshot') { snapshotSequence = message.sequence; apply(message.operations, true); return; }
     if (message.sequence <= snapshotSequence) return;
