@@ -43,4 +43,5 @@ def no_hand_jpeg(test_image: Path) -> bytes:
 
 @pytest.fixture
 def settings(model_path: Path) -> Settings:
-    return Settings(model_path=str(model_path), metrics_log_interval_s=60)
+    # MQTT input is off unless a test enables it against an explicit broker.
+    return Settings(model_path=str(model_path), metrics_log_interval_s=60, mqtt_enabled=False)

@@ -11,6 +11,10 @@
     python -m tools.bench http --url http://localhost:8001 --fps 30 --seconds 10
         Same as live, but POSTs to a running service (/v1/frames) and reads its /metrics.
 
+    python -m tools.bench mqtt --broker-host hgw-mqtt --broker-port 1883 --url http://127.0.0.1:8001
+        Acts as the gateway: publishes gateway-format packets to hgw/v1/frames/{session}
+        and reads the running vision service's /metrics.
+
 Frames come from tools/frames.py (crops of the official test image) unless --video is given.
 """
 
@@ -198,6 +202,51 @@ def run_http(args) -> dict:
     }
 
 
+def run_mqtt(args) -> dict:
+    """Act as the gateway: publish gateway-format packets to the broker, then read vision's /metrics."""
+    import uuid
+
+    import paho.mqtt.client as mqtt
+
+    jpegs = load_frames(args.video, 30)
+    total = int(args.fps * args.seconds)
+    base = args.url.rstrip("/")
+    session = uuid.uuid4().hex
+    topic = f"{args.prefix.strip('/')}/frames/{session}"
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="vision-bench-" + session[:8])
+    client.connect(args.broker_host, args.broker_port)
+    client.loop_start()
+    try:
+        _http("POST", f"{base}/metrics/reset")
+        start = time.perf_counter()
+        for i in range(total):
+            delay = start + i / args.fps - time.perf_counter()
+            if delay > 0:
+                time.sleep(delay)
+            info = client.publish(topic, frames.gateway_packet(session, i, jpegs[i % len(jpegs)]), qos=0)
+            if info.rc != mqtt.MQTT_ERR_SUCCESS:
+                raise RuntimeError(f"MQTT publish failed: {info.rc}")
+        elapsed = time.perf_counter() - start  # input window only
+        time.sleep(1.0)
+        snap = _http("GET", f"{base}/metrics")
+        health = _http("GET", f"{base}/healthz")
+    finally:
+        client.loop_stop()
+        client.disconnect()
+    return {
+        "mode": "mqtt",
+        "broker": f"{args.broker_host}:{args.broker_port}",
+        "topic": topic,
+        "target_input_fps": args.fps,
+        "elapsed_s": round(elapsed, 3),
+        "frames_published": total,
+        "avg_input_fps": round(snap["input_frame_count"] / elapsed, 2),
+        "avg_processing_fps": round(snap["processed_frame_count"] / elapsed, 2),
+        "health": health,
+        "metrics": snap,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -212,7 +261,14 @@ def main() -> int:
     p_http.add_argument("--url", default="http://localhost:8001")
     p_http.add_argument("--fps", type=float, default=30)
     p_http.add_argument("--seconds", type=float, default=10)
-    for p in (p_off, p_live, p_http):
+    p_mqtt = sub.add_parser("mqtt")
+    p_mqtt.add_argument("--url", default="http://localhost:8001", help="vision service (for /metrics)")
+    p_mqtt.add_argument("--broker-host", default="localhost")
+    p_mqtt.add_argument("--broker-port", type=int, default=11883)
+    p_mqtt.add_argument("--prefix", default="hgw/v1")
+    p_mqtt.add_argument("--fps", type=float, default=30)
+    p_mqtt.add_argument("--seconds", type=float, default=10)
+    for p in (p_off, p_live, p_http, p_mqtt):
         p.add_argument("--video", help="use frames from this video file instead of the test image")
         p.add_argument("--out", help="also write the JSON report to this file")
     args = parser.parse_args()
@@ -221,9 +277,11 @@ def main() -> int:
         report = run_offline(args)
     elif args.mode == "live":
         report = asyncio.run(run_live(args))
+    elif args.mode == "mqtt":
+        report = run_mqtt(args)
     else:
         report = run_http(args)
-    if args.mode != "http":
+    if args.mode not in ("http", "mqtt"):
         report["environment"] = environment()
     text = json.dumps(report, indent=2)
     print(text)

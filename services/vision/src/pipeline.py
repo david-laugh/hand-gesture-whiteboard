@@ -114,7 +114,8 @@ class FramePipeline:
     def submit(self, meta: FrameMeta, jpeg: bytes) -> SubmitResult:
         """Queue a frame for processing (event loop thread). Never blocks."""
         self._metrics.mark_input()
-        self._metrics.record_frame(meta.session_id, meta.frame_id, status="queued", ts=meta.ts, jpeg_bytes=len(jpeg))
+        self._metrics.record_frame(meta.session_id, meta.frame_id, status="queued", ts=meta.ts,
+                                   jpeg_bytes=len(jpeg), trace_id=meta.trace_id)
         replaced = self._pending.get(meta.session_id)
         replaced_id = None
         if replaced is not None:

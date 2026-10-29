@@ -1,6 +1,10 @@
 # vision (Container B)
 
-카메라 프레임(JPEG)에서 MediaPipe로 손 랜드마크 21개를 추출해, 합의된 JSON으로 **Gesture(C)에 WebSocket으로 전송**한다.
+Gateway가 **MQTT로 발행한** 카메라 프레임(JPEG)에서 MediaPipe로 손 랜드마크 21개를 추출해, 합의된 JSON으로 **Gesture(C)에 WebSocket으로 전송**한다.
+
+```text
+Gateway ── MQTT hgw/v1/frames/{session_id} ──► Vision ── WS ws://gesture:8002/ws/landmarks ──► Gesture
+```
 Gesture 판정(Draw/Eraser/Zoom/Undo …)은 하지 않는다. `gesture`는 항상 `null`.
 
 | 항목 | 값 |
@@ -79,24 +83,62 @@ Gesture 판정(Draw/Eraser/Zoom/Undo …)은 하지 않는다. `gesture`는 항�
 
 ## 4. 입력: Gateway → Vision
 
-Gateway에 아직 입력 구현이 없어서 Vision이 **독립적인 입력 인터페이스**를 제공한다. 이미지는 **raw JPEG binary**로 받는다. base64는 쓰지 않는다.
+### 4.1 MQTT (운영 경로, `services/gateway` 구현 기준)
+
+Gateway는 카메라 프레임을 MQTT로 **단방향 발행**한다. Vision은 같은 브로커를 구독한다. Gateway 코드는 수정하지 않았고, 아래 내용은 `services/gateway/src/{protocol,messaging}.py`와 gateway README를 기준으로 맞췄다.
+
+| 항목 | 값 |
+|---|---|
+| Topic | `{MQTT_TOPIC_PREFIX}/frames/{session_id}` (기본 `hgw/v1/frames/{session_id}`). Vision은 `hgw/v1/frames/+`를 구독 |
+| QoS / retain | 0 / false (gateway와 동일) |
+| Payload | `[uint32 BE meta_len][FrameMessage JSON utf-8][JPEG bytes]`. 메타는 `shared/contracts/frame.schema.json` |
+| 브로커 | gateway README의 `hgw-mqtt` (eclipse-mosquitto:2). compose 밖에서 실행하므로 컨테이너 수는 4개 그대로 |
+
+Vision이 하는 검증 (하나라도 실패하면 `invalid_frame_count`에 집계하고 추론하지 않음):
+- `message_type == "frame"`, `content_type == "image/jpeg"`
+- `schema_version` major 버전이 같을 것
+- topic의 session_id와 메타의 `session_id`가 같을 것
+- `trace_id`가 있을 것
+- `byte_length`가 실제 JPEG 크기와 같을 것
+- 크기 2 MiB 이하
+- JPEG signature가 맞을 것
+
+필드 대응 (FrameMessage → Vision 출력):
+
+| Gateway FrameMessage | Vision → Gesture 메시지 |
+|---|---|
+| `session_id` (gateway가 발급하는 32자 hex) | `session_id` 그대로 |
+| `frame_id` (session마다 0부터 증가) | `frame_id` 그대로 |
+| `captured_at_ms` (브라우저 캡처 시각) | **`ts`** — 원본 프레임 타임스탬프 |
+| `trace_id` | 출력에는 넣지 않음 (합의된 형식에 필드가 없음). Vision의 `/metrics/frames` 기록에만 남김 |
+| `width`, `height` | 참고용. 실제 크기는 디코딩 결과를 따름 (gateway 기본 해상도 960) |
+
+연결 처리: paho가 1~10초 backoff로 자동 재연결하고, 연결될 때마다 다시 구독한다. 브로커에 닿지 않으면 30초마다 WARNING을 남긴다. 받은 프레임은 HTTP/WS 입력과 똑같이 latest-wins 파이프라인으로 들어간다.
+
+Docker에서 브로커를 연결하는 방법: gateway README는 브로커를 `hgw-net` 네트워크에 띄운다. Vision은 `hand-net`에 있으므로 브로커를 `hand-net`에도 연결해야 한다.
+
+```bash
+docker run -d --name hgw-mqtt --network hgw-net -p 127.0.0.1:11883:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+docker network connect hand-net hgw-mqtt      # vision(hand-net)에서 hgw-mqtt:1883으로 접근
+docker compose up -d vision
+docker compose exec vision python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/healthz').read().decode())"   # mqtt_connected 확인
+```
+
+호스트에서 Python으로 실행할 때는 기본값 `MQTT_HOST=localhost`, `MQTT_PORT=11883`(gateway와 동일)을 쓴다. MQTT 입력을 끄려면 `MQTT_ENABLED=false`.
+
+### 4.2 HTTP / WebSocket (테스트·디버그용)
+
+Gateway 없이 Vision만 테스트할 때 쓰는 입력이다. 이미지는 **raw JPEG binary**로 받는다. base64는 쓰지 않는다.
 
 메타데이터: `session_id`(string), `frame_id`(int ≥ 0), `ts`(int, epoch ms), `encoding`(`"jpeg"`), `width`, `height`(선택. 실제 크기는 디코딩 결과를 따름)
 
 | 방식 | Endpoint | 형식 | 결과 |
 |---|---|---|---|
-| **스트리밍 (권장)** | `WS /ws/frames` | binary message: `[uint32 BE meta_len][meta JSON utf-8][JPEG bytes]` | C로 WS 전송. 성공 시 응답 없음, 오류 시 `{"type":"error",...}` |
+| 스트리밍 | `WS /ws/frames` | binary message: `[uint32 BE meta_len][meta JSON utf-8][JPEG bytes]` | C로 WS 전송. 성공 시 응답 없음, 오류 시 `{"type":"error",...}` |
 | 스트리밍 | `POST /v1/frames` | body = JPEG, `Content-Type: image/jpeg`, headers `X-Session-Id`, `X-Frame-Id`, `X-Ts`, [`X-Width`, `X-Height`] | `202 {"accepted", "frame_id", "replaced_frame_id"}`, 결과는 C로 WS 전송 |
 | 동기 (테스트/디버그) | `POST /v1/detect` | `/v1/frames`와 동일 | `200` + 계약 JSON 본문 (C로 보내지 않음). 단계별 시간은 `X-Decode-Ms`, `X-Inference-Ms`, `X-Serialization-Ms` 헤더로 반환 |
 
 오류 응답: `400`(메타 누락·형식 오류, JPEG가 아님), `415`(Content-Type이 `image/jpeg`가 아님).
-
-Gateway 예시 (Python, httpx):
-
-```python
-await client.post("http://vision:8001/v1/frames", content=jpeg_bytes, headers={
-    "Content-Type": "image/jpeg", "X-Session-Id": sid, "X-Frame-Id": str(fid), "X-Ts": str(ts)})
-```
 
 **Latest-wins:** session마다 대기 슬롯이 1개다. 처리 중에 새 프레임이 오면 대기 중이던 프레임을 교체하고 `dropped_frame_count`를 올린다. 이렇게 해서 처리가 밀려도 지연이 누적되지 않는다.
 
@@ -108,6 +150,8 @@ await client.post("http://vision:8001/v1/frames", content=jpeg_bytes, headers={
 
 | 항목 | 의미 |
 |---|---|
+| `mqtt_message_count` | MQTT로 받은 메시지 수 (검증 전) |
+| `mqtt_connect_count` / `mqtt_disconnect_count` | 브로커 연결 / 끊김 횟수 |
 | `input_frame_count` | 받은 프레임 수 (유효한 것) |
 | `processed_frame_count` | 실제로 추론까지 끝난 프레임 수 |
 | `dropped_frame_count` | latest-wins로 교체되어 추론하지 않은 프레임 수 |
@@ -132,6 +176,8 @@ python -m tools.bench live --fps 30 --seconds 10    # latest-wins + mock C로 WS
 # 컨테이너 안 (실행 중인 서비스 대상)
 docker compose exec vision python -m tools.assets   # 테스트 이미지 다운로드 (bind mount)
 docker compose exec vision python -m tools.bench http --url http://127.0.0.1:8001 --fps 30 --seconds 10
+# gateway 역할로 MQTT 발행 → 실행 중인 vision의 /metrics 확인
+docker compose exec vision python -m tools.bench mqtt --broker-host hgw-mqtt --broker-port 1883 --url http://127.0.0.1:8001
 ```
 
 CPU와 Memory는 벤치마크를 돌리는 동안 따로 측정한다.
@@ -172,6 +218,15 @@ python -m tests.mock_gesture_server --port 8002   # 수동 테스트용 mock C (
 | `tests/test_inference.py` | 손 검출, 21개, x·y 범위, `hands: []`, id 보존, JSON, VIDEO 연속 프레임, 모델 로딩 실패 | ✅ 실제 모델 |
 | `tests/test_websocket.py` | mock C 전송, 연결 실패 → 재연결, 끊김 감지 | ❌ 합성 메시지 |
 | `tests/test_service.py` | FastAPI 전체 경로 + mock C, 연속 입력 FPS와 드롭 집계 | ✅ 실제 모델 |
+| `tests/test_mqtt_input.py` | **gateway의 실제 `protocol.py`(읽기 전용 로드)로 만든 패킷** 파싱, 오류 입력 거부, 실제 브로커 → 추론 → mock C | 파싱: ❌ / 브로커 테스트: ✅ 실제 모델 |
+
+브로커 통합 테스트는 브로커가 있을 때만 실행된다.
+
+```bash
+docker run --rm -d --name vision-test-mqtt -p 127.0.0.1:18830:1883 eclipse-mosquitto:2 mosquitto -c /mosquitto-no-auth.conf
+VISION_MQTT_BROKER=127.0.0.1:18830 VISION_REQUIRE_MODEL=1 python -m pytest -q
+docker stop vision-test-mqtt
+```
 
 `tests/mock_gesture_server.py`는 테스트 전용이다. 서비스 코드(`src/`)는 이 파일을 import하지 않고, Docker image에서도 제외한다(`.dockerignore`).
 
@@ -190,6 +245,10 @@ docker compose logs -f vision
 
 | env | 기본값 |
 |---|---|
+| `MQTT_ENABLED` | `true` |
+| `MQTT_HOST` / `MQTT_PORT` | 코드 기본값 `localhost` / `11883` (호스트 실행), compose 기본값 `hgw-mqtt` / `1883` |
+| `MQTT_TOPIC_PREFIX` | `hgw/v1` (gateway와 같아야 함) |
+| `SCHEMA_VERSION` / `MAX_FRAME_BYTES` | `1.0.0` / `2097152` |
 | `GESTURE_WS_URL` | `ws://gesture:8002/ws/landmarks` |
 | `PUBLISH_ENABLED` | `true` |
 | `WS_RECONNECT_INTERVAL_S` / `WS_OPEN_TIMEOUT_S` / `WS_QUEUE_SIZE` | `2` / `3` / `64` |
@@ -199,7 +258,7 @@ docker compose logs -f vision
 ## 9. 디렉터리
 
 ```
-src/        config, contract(출력 계약), frame_input(입력 파싱), detector(MediaPipe),
+src/        config, contract(출력 계약), frame_input(입력 파싱), mqtt_input(gateway MQTT 구독), detector(MediaPipe),
             pipeline(latest-wins), publisher(WS client), metrics, main(FastAPI)
 tests/      pytest + mock_gesture_server (테스트 전용)
 tools/      assets(공식 모델/이미지 다운로드), visual_check, generate_samples, bench, frames
