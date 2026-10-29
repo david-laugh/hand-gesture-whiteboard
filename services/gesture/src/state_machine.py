@@ -5,12 +5,13 @@
 - 집게 N프레임   → ERASE_START … 아닌 프레임이 M프레임 → ERASE_END
 - 도구를 바꾸면 이전 도구의 *_END가 먼저 나가고, 그다음 새 도구의 *_START가 나간다.
 
-일회성 명령 (IDLE에서만): 자세를 COMMAND_HOLD_MS 유지하면 1번 발행
+일회성 명령 (IDLE에서만): 자세를 COMMAND_HOLD_MS(주먹은 UNDO_HOLD_MS) 유지하면 1번 발행
 - 주먹 → UNDO
 - 브이 → 다음 펜 색 (이후 DRAW_START의 params.color)
 - 손바닥 → 마지막으로 쓴 도구의 굵기 순환 (펜 brush_size / 지우개 eraser_radius)
 같은 자세를 계속 유지하면 다시 나가지 않는다 (자세를 바꿔야 재발행). 명령 사이에는 쿨다운이 있다.
-획을 끝낸 순간의 자세도 잠가 둔다 → 그리다가 주먹을 쥐어도 UNDO가 나가지 않는다.
+획이 끝나면 유지 시간을 그때부터 새로 잰다 → 그리다가 주먹으로 잠깐 접으면 UNDO가 나가지 않고,
+획이 끝난 뒤 주먹을 UNDO_HOLD_MS 이상 유지하면 UNDO가 나간다.
 """
 import itertools
 import secrets
@@ -77,6 +78,7 @@ class GestureStateMachine:
         pinch_enter: float = config.PINCH_ENTER_RATIO,
         pinch_exit: float = config.PINCH_EXIT_RATIO,
         hold_ms: int = config.COMMAND_HOLD_MS,
+        undo_hold_ms: int = config.UNDO_HOLD_MS,
         cooldown_ms: int = config.COMMAND_COOLDOWN_MS,
         colors: list[str] = config.PEN_COLORS,
         brush_sizes: list[float] = config.BRUSH_SIZES_PX,
@@ -92,7 +94,7 @@ class GestureStateMachine:
         self.flip_fix = flip_fix
         self.normal_sign = normal_sign
         self.pinch_enter, self.pinch_exit = pinch_enter, pinch_exit
-        self.hold_ms, self.cooldown_ms = hold_ms, cooldown_ms
+        self.hold_ms, self.undo_hold_ms, self.cooldown_ms = hold_ms, undo_hold_ms, cooldown_ms
         self.colors = colors
         self.brush_sizes, self.eraser_sizes = brush_sizes, eraser_sizes
         self.canvas_min_side = canvas_min_side
@@ -224,8 +226,9 @@ class GestureStateMachine:
     def _maybe_command(self, pose: str) -> StepResult | None:
         """일회성 명령: 유지 시간을 채웠고, 잠겨 있지 않고, 쿨다운이 지났으면 1번 발행."""
         kind = _COMMANDS.get(pose)
+        hold = self.undo_hold_ms if kind == "UNDO" else self.hold_ms
         if (kind is None or self._latched == pose
-                or self._clock_ms - self._cand_start_ms < self.hold_ms
+                or self._clock_ms - self._cand_start_ms < hold
                 or self._clock_ms - self._last_command_ms < self.cooldown_ms):
             return None
         self._latched = pose
@@ -254,11 +257,11 @@ class GestureStateMachine:
 
         self._exit_count += 1
         if self._exit_count >= self.exit_frames:
-            # 획을 끝낸 순간의 자세는 잠근다: 그리다가 주먹을 쥔 채로 있어도 UNDO가 나가지 않게
-            latched, cand = pose, (self._cand, self._cand_frames, self._cand_start_ms)
+            cand, cand_frames = self._cand, self._cand_frames
             ended = self.force_end()
-            self._cand, self._cand_frames, self._cand_start_ms = cand  # 다음 도구로 바로 넘어갈 수 있게 유지
-            self._latched = latched if latched in _COMMANDS else None
+            # 다음 도구로 바로 넘어갈 수 있게 연속 프레임 수는 유지하고,
+            # 명령 유지 시간은 획이 끝난 지금부터 새로 잰다 → 그리다 주먹으로 잠깐 접어도 UNDO가 나가지 않는다
+            self._cand, self._cand_frames, self._cand_start_ms = cand, cand_frames, self._clock_ms
             return ended
         # 이탈 대기 중: 손가락을 접는 중이라 끝점이 휘어 있다. 꼬리가 생기지 않게 마지막 좌표로 고정.
         return StepResult(f"{prefix}_MOVE", self.last_draw_pointer, self.stroke_id, self.state_frames)

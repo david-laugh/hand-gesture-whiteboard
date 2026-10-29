@@ -44,7 +44,7 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 |---|---|---|
 | 검지만 폄 | `DRAW_START` / `DRAW_MOVE` / `DRAW_END` | pointer = 검지 끝. START에 `params.color`, `params.brush_size`(px) |
 | 집게 (엄지 끝 4와 검지 끝 8을 붙임) | `ERASE_START` / `ERASE_MOVE` / `ERASE_END` | pointer = 4와 8의 중간점. START에 `params.eraser_radius`(정규화). 다른 포즈보다 먼저 검사 |
-| 주먹 0.5초 | `UNDO` (1번) | pointer `null` |
+| 주먹 0.7초 | `UNDO` (1번) | pointer `null`. 획이 끝난 시점부터 잼 |
 | 브이 (검지 + 중지) 0.5초 | `IDLE` + `params.color` (1번) | 다음 펜 색. 세션별 순환, 이후 `DRAW_START`에 반영 |
 | 손바닥 (네 손가락) 0.5초 | `IDLE` + `params.brush_size` 또는 `params.eraser_radius` (1번) | 마지막으로 쓴 도구의 굵기 순환 (펜 4/8/16px, 지우개 지름 20/30/50px) |
 
@@ -55,7 +55,7 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 - **일회성 명령** (주먹·브이·손바닥): 그리거나 지우는 중이 아닐 때만 나간다.
   - `COMMAND_HOLD_MS`(500) 동안 유지하면 1번 발행 → 같은 자세를 계속 유지하면 다시 나가지 않음 (자세를 바꿔야 재발행)
   - 명령 사이에는 `COMMAND_COOLDOWN_MS`(1000) 쿨다운
-  - 획을 끝낸 순간의 자세는 잠긴다 → **그리다가 주먹을 쥐어도 UNDO가 나가지 않는다** (손 모양을 한 번 바꾼 뒤 다시 주먹을 쥐면 UNDO)
+  - 주먹(UNDO)은 `UNDO_HOLD_MS`(700) 유지. 획이 끝난 시점부터 새로 잰다 → **그리다 주먹으로 잠깐 접으면 UNDO가 나가지 않고**, 집게·검지에서 주먹으로 바꿔 0.7초 이상 유지하면 UNDO
 - **지우개 크기 변환**: canvas는 `eraser_radius × min(가로, 세로) × 2`를 지우개 지름(px)으로 쓴다 (1280×720 → 720).
   그래서 지름 30px → `eraser_radius = 30 / (2 × 720) ≈ 0.0208`. 캔버스 크기가 다르면 `CANVAS_MIN_SIDE_PX` 조정.
 - 펜 색·굵기 설정은 세션에 남는다. 끊김 감시가 획을 닫아도 유지되고, `SESSION_TTL_S`(600초) 동안 메시지가 없으면 세션과 함께 사라진다.
@@ -120,7 +120,8 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 | `FLIP_NORMAL_SIGN` | `1` | 이 촬영 환경에서 정상인 회전 방향 (`1` 또는 `-1`, rec01 녹화 기준 `1`) |
 | `PINCH_ENTER_RATIO` / `PINCH_EXIT_RATIO` | `0.30` / `0.45` | 집게 진입 / 유지 기준 (dist(4,8) ÷ 손 크기) |
 | `PINCH_INDEX_MIN_RATIO` | `-0.15` | 검지가 이보다 깊게 접히면 집게 아님 (주먹 구분) |
-| `COMMAND_HOLD_MS` / `COMMAND_COOLDOWN_MS` | `500` / `1000` | 일회성 명령 유지 시간 / 쿨다운 |
+| `COMMAND_HOLD_MS` / `COMMAND_COOLDOWN_MS` | `500` / `1000` | 브이·손바닥 유지 시간 / 명령 쿨다운 |
+| `UNDO_HOLD_MS` | `700` | 주먹(UNDO) 유지 시간 (획이 끝난 시점부터) |
 | `PEN_COLORS` | canvas 팔레트 8색 | 쉼표로 구분한 `#RRGGBB` 목록, 첫 번째가 기본색 |
 | `BRUSH_SIZES_PX` / `BRUSH_DEFAULT_PX` | `4,8,16` / `8` | 펜 굵기 순환 |
 | `ERASER_SIZES_PX` / `ERASER_DEFAULT_PX` | `20,30,50` / `30` | 지우개 지름 순환 (px) |

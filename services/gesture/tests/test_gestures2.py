@@ -44,7 +44,7 @@ PINCH_LMS = pinch(0.10)
 
 class Runner:
     def __init__(self, **kw):
-        defaults = dict(enter_frames=3, exit_frames=5, hold_ms=500, cooldown_ms=1000, colors=COLORS,
+        defaults = dict(enter_frames=3, exit_frames=5, hold_ms=500, undo_hold_ms=700, cooldown_ms=1000, colors=COLORS,
                         brush_sizes=[4, 8, 16], brush_default=8, eraser_sizes=[20, 30, 50], eraser_default=30,
                         canvas_min_side=720, pinch_enter=0.30, pinch_exit=0.45, normal_sign=1)
         self.m = GestureStateMachine(**{**defaults, **kw})
@@ -139,17 +139,17 @@ def test_fist_hold_undo_once_until_pose_changes():
     res = r.feed(FIST_LMS, 60)  # 약 2초
     assert gestures(res).count("UNDO") == 1
     undo_at = gestures(res).index("UNDO")
-    assert undo_at * FRAME_MS >= 500 - FRAME_MS
+    assert undo_at * FRAME_MS >= 700 - FRAME_MS
     undo = res[undo_at]
     assert undo.pointer is None and undo.stroke_id is None
     # 자세를 바꿨다가 다시 주먹 → 쿨다운(1초)이 지났으므로 다시 UNDO
     r.feed(None, 3)
-    assert gestures(r.feed(FIST_LMS, 20)).count("UNDO") == 1
+    assert gestures(r.feed(FIST_LMS, 25)).count("UNDO") == 1
 
 
 def test_cooldown_blocks_quick_second_command():
     r = Runner()
-    first = r.feed(FIST_LMS, 18)
+    first = r.feed(FIST_LMS, 24)
     assert gestures(first).count("UNDO") == 1
     quick = r.feed(V_LMS, 17)  # 0.5초 유지했지만 직전 명령 후 1초가 안 됨
     assert not any(x.params.get("color") for x in quick)
@@ -181,16 +181,32 @@ def test_palm_cycles_size_of_last_used_tool():
     assert [x.params for x in res if x.params] == [{"eraser_radius": round(50 / 1440, 5)}]
 
 
-def test_folding_to_fist_while_drawing_does_not_undo():
-    """그리다가 주먹을 쥐어도(오래 유지해도) UNDO는 나가지 않는다."""
+def test_brief_fist_while_drawing_does_not_undo():
+    """그리다가 주먹으로 잠깐(획이 끝난 뒤 700ms 미만) 접었다 펴면 UNDO가 나가지 않는다."""
     r = Runner()
-    res = r.feed(DRAW_LMS, 10) + r.feed(FIST_LMS, 60)
+    res = r.feed(DRAW_LMS, 10) + r.feed(FIST_LMS, 5 + 18) + r.feed(None, 10)  # END 후 주먹 약 600ms
     g = gestures(res)
     assert "DRAW_END" in g
     assert "UNDO" not in g
-    # 손을 바꿨다가 다시 주먹을 쥐면 그때는 UNDO
-    r.feed(None, 3)
-    assert "UNDO" in gestures(r.feed(FIST_LMS, 20))
+
+
+def test_fist_hold_counts_from_stroke_end():
+    """유지 시간은 주먹을 쥔 순간이 아니라 획이 끝난 순간부터 잰다."""
+    r = Runner()
+    res = r.feed(DRAW_LMS, 10) + r.feed(FIST_LMS, 40)
+    g = gestures(res)
+    end_at, undo_at = g.index("DRAW_END"), g.index("UNDO")
+    assert (undo_at - end_at) * FRAME_MS >= 700
+    assert g.count("UNDO") == 1
+
+
+def test_pinch_then_fist_directly_undoes_once():
+    """집게(지우개)에서 바로 주먹으로 바꿔 700ms 이상 유지하면 UNDO 1번 (녹화 rec02에서 막혔던 경우)."""
+    r = Runner()
+    res = r.feed(PINCH_LMS, 10) + r.feed(FIST_LMS, 5 + 30)
+    g = gestures(res)
+    assert g.index("ERASE_END") < g.index("UNDO")
+    assert g.count("UNDO") == 1
 
 
 def test_no_command_while_drawing_or_erasing():

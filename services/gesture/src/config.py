@@ -44,6 +44,8 @@ PINCH_INDEX_MIN_RATIO = _float("PINCH_INDEX_MIN_RATIO", -0.15)
 
 # 일회성 명령 (주먹=UNDO, 브이=펜 색, 손바닥=굵기): 이만큼 유지하면 1번 발행
 COMMAND_HOLD_MS = _int("COMMAND_HOLD_MS", 500)
+# 주먹(UNDO)만 더 길게: 획을 끝내며 손을 접는 동작과 구분하기 위해. 획이 끝난 시점부터 잰다.
+UNDO_HOLD_MS = _int("UNDO_HOLD_MS", 700)
 # 일회성 명령 사이 최소 간격
 COMMAND_COOLDOWN_MS = _int("COMMAND_COOLDOWN_MS", 1000)
 
