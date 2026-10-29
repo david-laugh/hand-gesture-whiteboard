@@ -33,3 +33,11 @@ class CanvasEngineTests(unittest.TestCase):
         snapshot = engine.snapshot("session")
         self.assertEqual(snapshot["operations"][0]["type"], "stroke_begin")
         self.assertEqual(snapshot["operations"][1]["type"], "stroke_append")
+
+    def test_eraser_start_creates_a_single_click_erase_area(self):
+        engine = CanvasEngine(width=100, height=100)
+        result = engine.apply(gesture("ERASE_START", 0, {"x": .5, "y": .5}, stroke_id="erase", eraser_radius=.2))
+        operation = result["operations"][0]
+        self.assertEqual(operation["type"], "erase_begin")
+        self.assertEqual(operation["points"], [{"x": 50.0, "y": 50.0}])
+        self.assertEqual(operation["style"]["width"], 40.0)

@@ -5,6 +5,17 @@ const sessionId = new URLSearchParams(location.search).get('session_id') || 'def
 let snapshotSequence = -1;
 let controlSocket, tool = 'pen', strokeId, drawing = false;
 const cursor = document.getElementById('cursor');
+const penSize = document.getElementById('pen-size');
+const eraserSize = document.getElementById('eraser-size');
+
+function activeSize() { return Number(tool === 'pen' ? penSize.value : eraserSize.value); }
+
+function selectTool(nextTool) {
+  tool = nextTool;
+  document.getElementById('pen').classList.toggle('selected', tool === 'pen');
+  document.getElementById('eraser').classList.toggle('selected', tool === 'eraser');
+  document.querySelector('.tools').dataset.tool = tool;
+}
 
 function draw() {
   context.clearRect(0, 0, board.width, board.height);
@@ -53,7 +64,7 @@ function point(event) {
 
 function updateCursor(event) {
   const box = board.getBoundingClientRect();
-  const size = Number(document.getElementById('size').value) * box.width / board.width;
+  const size = activeSize() * box.width / board.width;
   cursor.style.left = `${event.clientX - box.left}px`;
   cursor.style.top = `${event.clientY - box.top}px`;
   cursor.style.width = cursor.style.height = `${Math.max(size, 4)}px`;
@@ -62,7 +73,7 @@ function updateCursor(event) {
 }
 
 function drawingParams() {
-  const size = Number(document.getElementById('size').value);
+  const size = activeSize();
   return tool === 'pen' ? {stroke_id: strokeId, color: '#172554', brush_size: size} : {stroke_id: strokeId, eraser_radius: size / (Math.min(board.width, board.height) * 2)};
 }
 
@@ -77,9 +88,10 @@ function connectControls() {
   controlSocket.onclose = () => setTimeout(connectControls, 1000);
 }
 
-document.getElementById('pen').onclick = () => { tool = 'pen'; document.getElementById('pen').classList.add('selected'); document.getElementById('eraser').classList.remove('selected'); };
-document.getElementById('eraser').onclick = () => { tool = 'eraser'; document.getElementById('eraser').classList.add('selected'); document.getElementById('pen').classList.remove('selected'); };
-document.getElementById('size').oninput = event => { document.getElementById('size-value').textContent = `${event.target.value} px`; };
+document.getElementById('pen').onclick = () => selectTool('pen');
+document.getElementById('eraser').onclick = () => selectTool('eraser');
+penSize.oninput = event => { document.getElementById('pen-size-value').textContent = `${event.target.value} px`; };
+eraserSize.oninput = event => { document.getElementById('eraser-size-value').textContent = `${event.target.value} px`; };
 board.addEventListener('pointerdown', event => { if (event.button !== 0) return; updateCursor(event); board.setPointerCapture(event.pointerId); drawing = true; strokeId = crypto.randomUUID(); sendDraw(tool === 'pen' ? 'DRAW_START' : 'ERASE_START', event); });
 board.addEventListener('pointermove', event => { updateCursor(event); if (drawing) sendDraw(tool === 'pen' ? 'DRAW_MOVE' : 'ERASE_MOVE', event); });
 board.addEventListener('pointerup', event => { if (!drawing) return; drawing = false; sendDraw(tool === 'pen' ? 'DRAW_END' : 'ERASE_END', event); });
@@ -87,3 +99,4 @@ board.addEventListener('pointercancel', event => { if (drawing) { drawing = fals
 board.addEventListener('pointerleave', () => { if (!drawing) cursor.style.display = 'none'; });
 connect();
 connectControls();
+selectTool('pen');
