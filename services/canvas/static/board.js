@@ -1,7 +1,15 @@
 const board = document.getElementById('board');
 const context = board.getContext('2d');
 const strokes = new Map();
-const sessionId = new URLSearchParams(location.search).get('session_id') || 'default';
+const requestedSession = new URLSearchParams(location.search).get('session_id') || 'auto';
+let sessionId = requestedSession === 'auto' ? 'default' : requestedSession;
+let followLive = requestedSession === 'auto';
+const skeleton = document.getElementById('skeleton');
+const skeletonContext = skeleton.getContext('2d');
+const savedLink = document.getElementById('saved');
+let skeletonTimer;
+// MediaPipe hand landmark connections (wrist 0, thumb 1-4, index 5-8, middle 9-12, ring 13-16, pinky 17-20).
+const HAND_CONNECTIONS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
 let snapshotSequence = -1;
 let controlSocket, tool = 'pen', strokeId, drawing = false;
 const cursor = document.getElementById('cursor');
@@ -66,12 +74,57 @@ function apply(operations, reset = false) {
   draw();
 }
 
+function clearSkeleton() { skeletonContext.clearRect(0, 0, skeleton.width, skeleton.height); }
+
+function drawSkeleton(hands) {
+  clearSkeleton();
+  clearTimeout(skeletonTimer);
+  if (!hands.length) return;
+  skeletonContext.lineWidth = 3;
+  skeletonContext.strokeStyle = 'rgba(14, 116, 144, 0.75)';
+  for (const hand of hands) {
+    const at = index => [hand[index][0] * skeleton.width, hand[index][1] * skeleton.height];
+    skeletonContext.beginPath();
+    for (const [from, to] of HAND_CONNECTIONS) { skeletonContext.moveTo(...at(from)); skeletonContext.lineTo(...at(to)); }
+    skeletonContext.stroke();
+    hand.forEach((_, index) => {
+      const [x, y] = at(index);
+      skeletonContext.fillStyle = index === 8 ? 'rgba(220, 38, 38, 0.9)' : 'rgba(8, 145, 178, 0.85)';
+      skeletonContext.beginPath(); skeletonContext.arc(x, y, index === 8 ? 7 : 4, 0, Math.PI * 2); skeletonContext.fill();
+    });
+  }
+  // Vision publishes every frame; if frames stop the stale skeleton should not stay on screen.
+  skeletonTimer = setTimeout(clearSkeleton, 500);
+}
+
+function setStatus(live) {
+  const mode = followLive ? '자동' : '고정';
+  document.getElementById('status').textContent = `연결됨 · ${mode} · ${sessionId}${live ? ' · 촬영 중' : ''}`;
+}
+
+function showSaved(file) {
+  savedLink.hidden = !file;
+  if (file) { savedLink.textContent = `저장됨: ${file}`; savedLink.href = `/drawings/${encodeURIComponent(file)}`; }
+}
+
+function switchSession(message) {
+  const changed = message.session_id !== sessionId;
+  sessionId = message.session_id; followLive = message.auto;
+  setStatus(message.live); showSaved(message.saved); clearSkeleton();
+  if (changed && controlSocket) { controlSocket.onclose = null; controlSocket.close(); connectControls(); }
+}
+
 function connect() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const socket = new WebSocket(`${protocol}//${location.host}/ws/board?session_id=${encodeURIComponent(sessionId)}`);
-  socket.onopen = () => { document.getElementById('status').textContent = `연결됨 · ${sessionId}`; };
+  const socket = new WebSocket(`${protocol}//${location.host}/ws/board?session_id=${encodeURIComponent(followLive ? 'auto' : sessionId)}`);
+  socket.onopen = () => setStatus(false);
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
+    if (message.type === 'session') { switchSession(message); return; }
+    if (message.session_id !== undefined && message.session_id !== sessionId) return;
+    if (message.type === 'landmarks') { drawSkeleton(message.hands); return; }
+    if (message.type === 'saved') { showSaved(message.file); return; }
+    if (message.type === 'session_end') { setStatus(false); clearSkeleton(); return; }
     if (message.type === 'snapshot') { snapshotSequence = message.sequence; apply(message.operations, true); return; }
     if (message.sequence <= snapshotSequence) return;
     snapshotSequence = message.sequence; apply(message.operations);

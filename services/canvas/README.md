@@ -1,10 +1,12 @@
 # Canvas (Container D)
 
-Canvas는 Gesture가 만든 명령을 MQTT로 받아 그림 상태를 관리하고, browser renderer가 적용할 `CanvasMessage.operations`를 MQTT로 발행합니다. 카메라 JPEG나 hand landmark는 이 서비스에 전달하지 않습니다.
+Canvas는 Gesture가 만든 명령을 MQTT로 받아 그림 상태를 관리하고, browser renderer가 적용할 `CanvasMessage.operations`를 MQTT로 발행합니다. 그림 상태는 Gesture 명령으로만 바뀝니다. Vision의 hand landmark는 **화면 표시(손 뼈대)와 촬영 세션 감지에만** 구독하며 그림에는 쓰지 않습니다. 카메라 JPEG는 받지 않습니다.
 
 ```text
 Gesture command ── MQTT ──► Canvas ── MQTT ──► canvas operations
  hgw/v1/gestures/{session}             hgw/v1/canvas/{session}
+Vision landmarks ─ MQTT ──► Canvas ── /ws/board ──► 손 뼈대 레이어 + 세션 자동 전환
+ hgw/v1/landmarks/{session}
 ```
 
 ## 전체 파이프라인에서의 위치와 연결 상태
@@ -49,9 +51,9 @@ docker build -t hand-gesture-canvas ./services/canvas
 docker run -d --name hgw-canvas --network hgw-net -p 8003:8003 -e MQTT_HOST=hgw-mqtt -e MQTT_PORT=1883 -e MQTT_TOPIC_PREFIX=hgw/v1 -e CANVAS_WIDTH=1280 -e CANVAS_HEIGHT=720 hand-gesture-canvas
 ```
 
-`http://localhost:8003/?session_id=<session_id>`에서 실시간 그림판을 엽니다. 이 페이지는 Canvas가 MQTT로 받은 operation을 WebSocket으로 전달받아 그립니다. Canvas는 고정된 `1280×720` 논리 좌표를 사용하며 브라우저 크기가 바뀌어도 stroke 좌표는 바뀌지 않습니다.
+`http://localhost:8003/`에서 실시간 그림판을 엽니다. 주소에 `session_id`가 없으면 **자동 모드**로, 폰에서 촬영을 시작한 최신 세션을 따라갑니다(아래 "카메라 세션 자동 전환과 저장"). 이 페이지는 Canvas가 MQTT로 받은 operation을 WebSocket으로 전달받아 그립니다. Canvas는 고정된 `1280×720` 논리 좌표를 사용하며 브라우저 크기가 바뀌어도 stroke 좌표는 바뀌지 않습니다.
 
-`session_id`는 하나의 독립된 그림 상태를 구분하는 이름입니다. URL에 없으면 `default`를 사용하므로 `http://localhost:8003/`와 `http://localhost:8003/?session_id=default`는 같은 그림판입니다. `?session_id=team-a`처럼 다른 값을 쓰면 MQTT topic, stroke history, 화면 snapshot이 `team-a` 전용으로 분리됩니다. 같은 ID를 연 여러 브라우저는 동일한 그림을 실시간으로 봅니다.
+`session_id`는 하나의 독립된 그림 상태를 구분하는 이름입니다. 특정 세션만 보려면 `?session_id=<id>`로 고정 모드로 엽니다. 자동 모드에서 아직 촬영 세션이 없으면 `default` 그림판을 보여 줍니다. `?session_id=team-a`처럼 다른 값을 쓰면 MQTT topic, stroke history, 화면 snapshot이 `team-a` 전용으로 분리됩니다. 같은 ID를 연 여러 브라우저는 동일한 그림을 실시간으로 봅니다.
 
 그림판은 **펜 굵기**와 **지우개 굵기**를 각각 독립적으로 기억합니다. 기본값은 펜 8px, 지우개 30px이며 각 슬라이더를 조절해도 다른 도구의 값은 바뀌지 않습니다. 펜 색상은 기본 8색 팔레트, 브라우저 색상 맵, `#RRGGBB` HEX 직접 입력으로 지정할 수 있고 세 입력은 동기화됩니다. 잘못된 HEX는 적용하지 않고 이전 유효 색상을 유지합니다. 마우스/터치가 canvas 위에 있으면 현재 선택한 도구의 굵기와 같은 크기의 원형 포인터가 보입니다. 지우개는 반투명 채움·점선 테두리·내부 원으로 현재 지워질 영역을 표시하며, 이 원의 지름이 실제 erase operation 폭과 같습니다. 지우개로 **한 번 클릭**하면 그 원형 영역을 즉시 지우고, 드래그하면 같은 폭으로 연속해서 지웁니다. 이 UI에서 직접 그리면 browser는 `/ws/control`으로 gesture를 보내고, Canvas는 이를 `{prefix}/gestures/{session_id}` MQTT topic에 발행합니다. Canvas가 같은 topic을 구독해 처리한 뒤 `{prefix}/canvas/{session_id}` 결과를 다시 그림판에 전달하므로, UI 테스트와 실제 C(Gesture) 입력은 같은 MQTT 처리 경로를 사용합니다.
 
@@ -141,11 +143,32 @@ Canvas는 C가 보낸 normalized `pointer` `{x: 0..1, y: 0..1}`를 고정된 `12
 
 기본 설정에서는 80px 이동을 최대 8px 간격의 연속된 점들로 나누므로, landmark가 일정하지 않아도 선이 뚝뚝 끊겨 보이는 현상을 줄입니다.
 
+## 카메라 세션 자동 전환과 저장
+
+Gateway는 폰에서 **촬영 시작**을 누를 때마다 새 `session_id`를 만들지만, 시작·종료를 따로 알리지 않습니다. 대신 Vision은 손이 없어도 처리한 프레임마다 `hgw/v1/landmarks/{session_id}`를 발행하므로 Canvas는 이 topic으로 세션을 판단합니다.
+
+1. 처음 보는 `session_id`의 landmarks가 오면 **촬영 시작**입니다. 자동 모드 그림판은 그 세션의 빈 캔버스로 바뀌고, 이전 세션 그림은 저장됩니다.
+2. landmarks가 `CANVAS_SESSION_IDLE_SEC`(기본 5초) 동안 끊기면 **촬영 종료**입니다. 그 세션 그림을 저장하고 화면에는 그대로 남겨 둡니다.
+3. 파일 이름은 `YYYYMMDD-HHMMSS_<세션 앞 8자리>.png`(세션 시작 시각)입니다. 같은 세션을 다시 저장하면 같은 파일을 덮어쓰고, 빈 그림은 저장하지 않습니다. 시각은 container 시간대를 따르므로 Docker 기본값(UTC)이면 한국 시간보다 9시간 이릅니다.
+4. 그림판 상단의 `저장 폴더` 링크(`/v1/drawings`)에서 목록을, `저장됨: …` 링크에서 방금 저장한 PNG를 열 수 있습니다.
+5. 마우스 UI(`/ws/control`)로 그린 명령은 촬영 세션으로 취급하지 않으므로 자동 모드 화면을 바꾸지 않습니다.
+
+주의: 폰 화면(`services/gateway/static/app.js`)은 연결이 끊기면 자동 재연결하고, Gateway는 연결마다 새 세션 ID를 만듭니다. 촬영 중 네트워크가 끊기면 그림이 두 세션(두 파일)으로 나뉠 수 있습니다.
+
+## 손 뼈대 레이어
+
+Canvas는 `hgw/v1/landmarks/+`를 구독해 손 21개 점을 `[x, y]`(0~1)로 줄여 `/ws/board`로 보내고, 그림판은 그림 위 별도 투명 canvas에 뼈대를 그립니다(검지 끝 8번은 빨간 점). 좌표는 Gesture의 `pointer`와 같은 이미지 기준 0~1이고 Gesture가 x를 반전하지 않으므로 선 위치와 맞습니다. Vision 형식(`[[x, y, z], …]`)과 공통 계약 형식(`[{"id", "x", "y", "z"}, …]`)을 모두 받습니다. 손이 없거나 0.5초 동안 landmarks가 오지 않으면 뼈대를 지웁니다.
+
+## 카메라 비율
+
+Canvas는 0~1 좌표를 고정 `1280×720`(16:9)에 그대로 펼칩니다. 폰을 세로로 들면 세로 영상이 가로로 늘어나 원이 옆으로 퍼집니다. 현재 Vision landmarks와 GestureMessage에는 원본 프레임 크기가 없어 Canvas만으로는 비율을 보정할 수 없으므로, **시연은 폰을 가로로 들고** 진행합니다. 세로 촬영을 지원하려면 공통 계약에 프레임 폭·높이를 싣는 변경을 팀에서 합의해야 합니다.
+
 ## 그림판 WebSocket
 
 | Path | 역할 |
 | --- | --- |
-| `/ws/board?session_id=<id>` | Canvas operation과 현재 stroke snapshot을 browser에 전달 |
+| `/ws/board` 또는 `/ws/board?session_id=auto` | 자동 모드. 최신 촬영 세션으로 바뀔 때마다 `session` 메시지와 그 세션 snapshot을 보냄 |
+| `/ws/board?session_id=<id>` | 고정 모드. Canvas operation, 현재 stroke snapshot, 손 뼈대(`landmarks`), 저장 알림(`saved`)을 browser에 전달 |
 | `/ws/control?session_id=<id>` | 펜·지우개 UI gesture를 받아 MQTT gesture topic으로 발행 |
 
 `/ws/board`는 새 browser가 접속해도 기존 session의 visible stroke를 snapshot으로 보내므로, 화면을 새로 열어도 현재 그림을 볼 수 있습니다.
@@ -161,6 +184,9 @@ Canvas는 C가 보낸 normalized `pointer` `{x: 0..1, y: 0..1}`를 고정된 `12
 | `GET` | `/healthz` | MQTT 연결을 포함한 상태 |
 | `POST` | `/v1/apply` | `GestureMessage` JSON을 직접 적용하고 `CanvasMessage` 반환 |
 | `GET` | `/v1/sessions/{session_id}/export.png` | 현재 session의 PNG export |
+| `POST` | `/v1/sessions/{session_id}/save` | 현재 session 그림을 저장 폴더에 즉시 저장 |
+| `GET` | `/v1/drawings` | 저장 폴더의 PNG 목록(최신순) |
+| `GET` | `/drawings/{file}` | 저장된 PNG 파일 |
 
 ## 환경 변수
 
@@ -173,6 +199,8 @@ Canvas는 C가 보낸 normalized `pointer` `{x: 0..1, y: 0..1}`를 고정된 `12
 | `CANVAS_HEIGHT` | `720` | output canvas 높이(px) |
 | `CANVAS_SMOOTHING` | `1.0` | 위치 완화 비율. `1.0`은 완화 없음(Gesture가 이미 One-Euro filter 적용). 작을수록 부드럽지만 지연이 늘어남 |
 | `CANVAS_SEGMENT_PX` | `8` | 보간 점 최대 간격(px) |
+| `CANVAS_SAVE_DIR` | `services/canvas/drawings` (container: `/app/drawings`) | 세션 그림 자동 저장 폴더 |
+| `CANVAS_SESSION_IDLE_SEC` | `5` | landmarks가 이 시간 동안 끊기면 촬영 종료로 보고 저장 |
 
 ## 운영 전 필요한 MQTT 사항
 
