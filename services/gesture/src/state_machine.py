@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from . import config
-from .hand_pose import INDEX_TIP, Point, is_draw_pose
+from .hand_pose import Point, classify_draw
 from .one_euro import PointFilter
 
 IDLE = "IDLE"
@@ -37,6 +37,7 @@ class StepResult:
     pointer: tuple[float, float] | None  # 0~1 로 자른 좌표
     stroke_id: str | None
     state_frames: int  # 현재 상태를 몇 프레임째 유지 중인지
+    flip_fixed: bool = False  # 손가락 번호 뒤집힘 보정으로 그리기 자세가 된 프레임
 
 
 def _clamp01(v: float) -> float:
@@ -53,11 +54,15 @@ class GestureStateMachine:
         min_cutoff: float = config.ONE_EURO_MIN_CUTOFF,
         beta: float = config.ONE_EURO_BETA,
         d_cutoff: float = config.ONE_EURO_D_CUTOFF,
+        flip_fix: bool = config.FLIP_FIX_ENABLED,
+        normal_sign: int = config.FLIP_NORMAL_SIGN,
     ):
         self.enter_frames = enter_frames
         self.exit_frames = exit_frames
         self.session_gap_ms = session_gap_ms
         self.finger_ratio = finger_ratio
+        self.flip_fix = flip_fix
+        self.normal_sign = normal_sign
         self._filter = PointFilter(min_cutoff, beta, d_cutoff)
         self._last_ts: int | None = None
         self._last_recv_ms: int | None = None
@@ -108,15 +113,18 @@ class GestureStateMachine:
                 return ended
 
         dt_s = (dt_ms or 0) / 1000.0
-        pose = landmarks is not None and is_draw_pose(landmarks, self.finger_ratio)
-        raw = None
+        pose, raw, flip_fixed = False, None, False
         if landmarks is not None:
-            tip = landmarks[INDEX_TIP]
+            # 뒤집힘 보정으로 그리기 자세가 되면 tip은 실제 검지 끝(원래 20번)이다
+            pose, tip, flip_fixed = classify_draw(landmarks, self.finger_ratio, self.flip_fix, self.normal_sign)
             raw = (tip.x, tip.y)
 
         if self.state == IDLE:
-            return self._step_idle(pose, raw, dt_s)
-        return self._step_drawing(pose, raw, dt_s)
+            result = self._step_idle(pose, raw, dt_s)
+        else:
+            result = self._step_drawing(pose, raw, dt_s)
+        result.flip_fixed = flip_fixed
+        return result
 
     def _filtered(self, raw: tuple[float, float], dt_s: float) -> tuple[float, float]:
         x, y = self._filter(raw[0], raw[1], dt_s)

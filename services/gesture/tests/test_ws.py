@@ -5,6 +5,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from src import config
 from src.main import app, processor
 from src.mqtt_io import MqttBridge
 from tests.conftest import load_fixture, to_vision_format
@@ -37,13 +38,14 @@ def gestures(bridge):
 
 def test_ws_sequence_publishes_start_move_end(fake_bridge, gesture_validator):
     client, bridge = fake_bridge
-    seq = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * 3 + ["no_hand"] * 2
+    m = config.DRAW_EXIT_FRAMES
+    seq = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * m + ["no_hand"] * 2
     with client.websocket_connect(WS_PATH) as ws:
         for i, pose in enumerate(seq):
             ws.send_text(text(pose, i))
     # 연결을 닫으면 서버 쪽 처리가 끝날 때까지 기다린다
     assert gestures(bridge) == (
-        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * 5 + ["DRAW_END"] + ["IDLE"] * 2
+        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * (3 + m - 1) + ["DRAW_END"] + ["IDLE"] * 2
     )
     topics = {t for t, _, _, _ in bridge.client.published}
     assert topics == {"hgw/v1/gestures/ws-01"}

@@ -105,7 +105,8 @@ class GestureProcessor:
             log_json(logging.WARNING, event="lag", trace_id=msg.trace_id, session_id=msg.session_id,
                      frame_id=msg.frame_id, lag_ms=lag_ms, threshold_ms=self.lag_warn_ms)
         log_json(trace_id=msg.trace_id, frame_id=msg.frame_id, session_id=msg.session_id, source=source,
-                 gesture=result.gesture, state_frames=result.state_frames, gesture_ms=gesture_ms, lag_ms=lag_ms)
+                 gesture=result.gesture, state_frames=result.state_frames, gesture_ms=gesture_ms, lag_ms=lag_ms,
+                 flip_fixed=result.flip_fixed)
         return out
 
     def process_payload(self, payload: bytes | str | dict[str, Any], source: str, origin: str = "") -> dict | None:

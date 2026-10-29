@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
+from src import config
 from src.main import app
 from src.mqtt_io import MqttBridge
 from src.processor import GestureProcessor
@@ -71,7 +72,8 @@ def gestures(bridge):
     return [m["gesture"] for _, m, _, _ in published(bridge)]
 
 
-DRAW_SEQUENCE = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * 3 + ["no_hand"] * 2
+M = config.DRAW_EXIT_FRAMES  # 이탈 프레임 수 (기본 5)
+DRAW_SEQUENCE = ["no_hand"] * 2 + ["index_pose"] * 6 + ["fist"] * M + ["no_hand"] * 2
 
 
 @pytest.mark.parametrize("fmt", ["vision", "repo"])
@@ -79,9 +81,9 @@ def test_sequence_publishes_draw_start_move_end(bridge, fmt):
     for i, pose in enumerate(DRAW_SEQUENCE):
         deliver(bridge, frame(pose, i, fmt))
     assert gestures(bridge) == (
-        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * 3 + ["DRAW_MOVE"] * 2 + ["DRAW_END"] + ["IDLE"] * 2
+        ["IDLE"] * 4 + ["DRAW_START"] + ["DRAW_MOVE"] * 3 + ["DRAW_MOVE"] * (M - 1) + ["DRAW_END"] + ["IDLE"] * 2
     )
-    stroke_ids = {m["params"].get("stroke_id") for _, m, _, _ in published(bridge)[4:11]}
+    stroke_ids = {m["params"].get("stroke_id") for _, m, _, _ in published(bridge)[4:4 + 4 + M]}
     assert len(stroke_ids) == 1 and None not in stroke_ids
 
 

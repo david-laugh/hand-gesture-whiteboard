@@ -1,3 +1,4 @@
+from src import config
 import pytest
 
 IDS = ("trace_id", "session_id", "frame_id")
@@ -32,7 +33,8 @@ def test_classify_pointer_null_without_hand(client, fixture):
 
 def test_draw_sequence_over_http_with_skipped_frame_ids(client, fixture, gesture_validator):
     """frame_id가 건너뛰어도 그리기가 동작하고, 모든 응답이 schema를 통과한다."""
-    frames = ["index_pose"] * 5 + ["fist"] * 3 + ["no_hand"]
+    m = config.DRAW_EXIT_FRAMES
+    frames = ["index_pose"] * 5 + ["fist"] * m + ["no_hand"]
     bodies = []
     for i, name in enumerate(frames):
         req = fixture(name)
@@ -47,9 +49,8 @@ def test_draw_sequence_over_http_with_skipped_frame_ids(client, fixture, gesture
 
     assert [b["gesture"] for b in bodies] == [
         "IDLE", "IDLE", "DRAW_START", "DRAW_MOVE", "DRAW_MOVE",
-        "DRAW_MOVE", "DRAW_MOVE", "DRAW_END", "IDLE",
-    ]
-    stroke_ids = {b["params"]["stroke_id"] for b in bodies[2:8]}
+    ] + ["DRAW_MOVE"] * (m - 1) + ["DRAW_END", "IDLE"]
+    stroke_ids = {b["params"]["stroke_id"] for b in bodies[2:2 + 3 + m]}
     assert len(stroke_ids) == 1
     assert "stroke_id" not in bodies[-1]["params"]
     assert bodies[-1]["pointer"] is None
