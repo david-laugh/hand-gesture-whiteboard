@@ -55,6 +55,26 @@ def test_draw_sequence_over_http_with_skipped_frame_ids(client, fixture, gesture
     assert bodies[-1]["pointer"] is None
 
 
+def test_classify_accepts_vision_format(client, fixture, gesture_validator):
+    from tests.conftest import to_vision_format
+
+    res = client.post("/v1/classify", json=to_vision_format(fixture("index_pose")))
+    assert res.status_code == 200
+    body = res.json()
+    gesture_validator.validate(body)
+    assert body["trace_id"] == "sess-01-1042"
+
+
+def test_invalid_vision_format_returns_contract_error(client, fixture):
+    from tests.conftest import to_vision_format
+
+    req = to_vision_format(fixture("index_pose"))
+    req["hands"][0]["landmarks"].pop()
+    res = client.post("/v1/classify", json=req)
+    assert res.status_code == 422
+    assert res.json()["code"] == "SCHEMA_VIOLATION"
+
+
 def test_reset_clears_session_state(client, fixture):
     for _ in range(3):
         client.post("/v1/classify", json=fixture("index_pose"))

@@ -10,6 +10,13 @@ def _float(name: str, default: float) -> float:
     return float(os.getenv(name, default))
 
 
+def _bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 SERVICE_NAME = os.getenv("SERVICE_NAME", "gesture")
 SCHEMA_VERSION = os.getenv("SCHEMA_VERSION", "1.0.0")
 SCHEMA_MAJOR = SCHEMA_VERSION.split(".")[0]
@@ -20,6 +27,8 @@ DRAW_ENTER_FRAMES = _int("DRAW_ENTER_FRAMES", 3)
 DRAW_EXIT_FRAMES = _int("DRAW_EXIT_FRAMES", 3)
 # 이전 프레임과 간격이 이보다 길면 세션 상태 초기화 (ms)
 SESSION_GAP_MS = _int("SESSION_GAP_MS", 500)
+# 처리 시각 − 입력 시각이 이보다 크면 경고 로그 (ms)
+LAG_WARN_MS = _int("LAG_WARN_MS", 200)
 
 # 손가락 "펴짐" 기준: (손목~손끝 − 손목~둘째 마디) ÷ 손 크기 > 이 값
 FINGER_EXTENDED_RATIO = _float("FINGER_EXTENDED_RATIO", 0.15)
@@ -28,3 +37,11 @@ FINGER_EXTENDED_RATIO = _float("FINGER_EXTENDED_RATIO", 0.15)
 ONE_EURO_MIN_CUTOFF = _float("ONE_EURO_MIN_CUTOFF", 1.0)  # 낮을수록 천천히 움직일 때 더 부드러움
 ONE_EURO_BETA = _float("ONE_EURO_BETA", 10.0)  # 높을수록 빠르게 움직일 때 덜 늦게 따라옴
 ONE_EURO_D_CUTOFF = _float("ONE_EURO_D_CUTOFF", 1.0)
+
+# MQTT (gateway와 같은 방식)
+MQTT_ENABLED = _bool("MQTT_ENABLED", True)
+MQTT_HOST = os.getenv("MQTT_HOST", "hgw-mqtt")
+MQTT_PORT = _int("MQTT_PORT", 1883)
+MQTT_TOPIC_PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "hgw/v1").strip("/")
+if not MQTT_TOPIC_PREFIX or any(c in MQTT_TOPIC_PREFIX for c in "+#\0"):
+    raise ValueError("Invalid MQTT_TOPIC_PREFIX")
