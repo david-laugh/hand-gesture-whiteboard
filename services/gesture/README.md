@@ -62,6 +62,26 @@ python -m venv .venv            # Python 3.11~3.12 권장
 .venv/Scripts/python -m pytest -q
 ```
 
+### 주의사항
+
+- **로컬 실행 시 `MQTT_PORT=11883`을 꼭 지정한다.** 기본값은 1883이라, PC의 1883에 다른 mosquitto
+  (예: Windows에 설치된 mosquitto 서비스)가 돌고 있으면 **오류 없이 엉뚱한 브로커에 붙는다.**
+  그러면 C 로그에는 `mqtt_connected`가 찍히지만 메시지는 오가지 않는다.
+- 끊김 감시(`SESSION_GAP_MS`)는 **서버 수신 시각** 기준이다. 휴대폰 시계(`ts`)가 서버와 몇 초 달라도 영향이 없다.
+  `ts`는 프레임 간격 계산(필터, 첫 프레임 gap 판단)과 지연 경고(`LAG_WARN_MS`)에만 쓴다.
+  시계 차이가 크면 지연 경고가 계속 나올 수 있다 (세션당 1초에 1번).
+
+### B 없이 D(canvas) 개발하기
+
+`send_sequence.py --mqtt`를 돌리면 C가 `hgw/v1/gestures/{session_id}`에 GestureMessage를 계속 발행한다.
+D는 이 토픽을 구독하면 vision 없이 그리기 입력(DRAW_START → DRAW_MOVE… → DRAW_END)을 받을 수 있다.
+반복이 필요하면 셸에서 루프로 돌린다.
+
+```bash
+while true; do .venv/Scripts/python dev/send_sequence.py dev-01 --mqtt; done
+# PowerShell: while ($true) { .venv\Scripts\python dev\send_sequence.py dev-01 --mqtt }
+```
+
 ### 브로커 + C + 가짜 B + 가짜 D
 
 1. 로컬 MQTT 브로커 (gateway README와 같은 방식, 호스트 포트 11883)

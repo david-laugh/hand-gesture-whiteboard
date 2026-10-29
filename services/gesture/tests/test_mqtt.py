@@ -46,11 +46,14 @@ def bridge(clock):
     return b
 
 
-def frame(pose: str, i: int, fmt: str = "vision", session_id: str = "sess-01") -> bytes:
+SERVER_NOW_MS = 1_793_260_800_000
+
+
+def frame(pose: str, i: int, fmt: str = "vision", session_id: str = "sess-01", ts_offset_ms: int = 0) -> bytes:
     repo = load_fixture(pose)
     repo["session_id"] = session_id
     repo["frame_id"] = i
-    repo["timestamp_ms"] = 1_793_260_800_000 + i * 66
+    repo["timestamp_ms"] = SERVER_NOW_MS + ts_offset_ms + i * 66
     data = to_vision_format(repo) if fmt == "vision" else repo
     return json.dumps(data).encode()
 
@@ -134,6 +137,29 @@ def test_gap_while_drawing_publishes_draw_end(bridge, clock):
 
     bridge.check_gaps()  # 한 번만 발행
     assert gestures(bridge).count("DRAW_END") == 1
+
+
+@pytest.mark.parametrize("ts_offset_ms", [10_000, -10_000], ids=["phone_ahead_10s", "phone_behind_10s"])
+def test_gap_watch_uses_server_clock_not_ts(clock, ts_offset_ms):
+    """ts(휴대폰 시계)가 서버보다 10초 앞서거나 뒤처져도, 끊김 감시는 서버 수신 시각으로 판단한다."""
+    server_ms = lambda: SERVER_NOW_MS + int((clock.t - 100.0) * 1000)  # noqa: E731
+    b = MqttBridge(GestureProcessor(clock=clock, wall_ms=server_ms), prefix=PREFIX, client=FakeClient())
+    b.connected = True
+
+    # 66ms 간격으로 계속 들어오는 동안에는 감시가 DRAW_END를 만들면 안 된다
+    for i in range(20):
+        deliver(b, frame("index_pose", i, ts_offset_ms=ts_offset_ms))
+        b.check_gaps()
+        clock.t += 0.066
+    assert gestures(b) == ["IDLE", "IDLE", "DRAW_START"] + ["DRAW_MOVE"] * 17
+
+    clock.t += 0.4  # 마지막 수신 후 약 470ms: 아직 아님
+    b.check_gaps()
+    assert "DRAW_END" not in gestures(b)
+
+    clock.t += 0.1  # 약 570ms > 500ms
+    b.check_gaps()
+    assert gestures(b)[-1] == "DRAW_END"
 
 
 def test_gap_while_idle_publishes_nothing(bridge, clock):
