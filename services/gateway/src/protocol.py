@@ -1,4 +1,4 @@
-"""Shared framing: uint32 metadata length, UTF-8 JSON, then JPEG bytes."""
+"""Browser and MQTT frame framing helpers."""
 import json
 import struct
 import time
@@ -74,11 +74,26 @@ class Contracts:
             raise ValueError("Schema major version mismatch")
 
     def browser_frame(self, data, session_id, previous_id, limit):
+        if not 0 < len(data) <= limit:
+            raise ValueError("Invalid frame size")
         received = now_ms()
-        meta, jpeg = decode_frame(data, limit)
-        allowed = {"frame_id", "captured_at_ms", "width", "height", "jpeg_quality", "mirrored"}
-        if set(meta) - allowed:
-            raise ValueError("Unexpected browser metadata field")
+        # The camera page uses the established C1 wire format: an optional
+        # uint64 capture timestamp followed by JPEG bytes. Keep accepting the
+        # earlier metadata packet too, so existing browser clients continue to work.
+        if data[:2] == b"\xff\xd8":
+            meta, jpeg = {"captured_at_ms": received}, data
+        elif len(data) >= 10 and data[8:10] == b"\xff\xd8":
+            meta = {"captured_at_ms": struct.unpack_from(">Q", data)[0]}
+            jpeg = data[8:]
+        else:
+            meta, jpeg = decode_frame(data, limit)
+            allowed = {"frame_id", "captured_at_ms", "width", "height", "jpeg_quality", "mirrored"}
+            if set(meta) - allowed:
+                raise ValueError("Unexpected browser metadata field")
+        width, height = jpeg_dimensions(jpeg)
+        meta.setdefault("frame_id", previous_id + 1)
+        meta.setdefault("width", width)
+        meta.setdefault("height", height)
         envelope = dict(meta, schema_version=self.version, message_type="frame",
                         trace_id=uuid.uuid4().hex, session_id=session_id,
                         timestamp_ms=received, received_at_ms=received,
@@ -86,6 +101,6 @@ class Contracts:
         self.validate("frame", envelope)
         if envelope["frame_id"] <= previous_id:
             raise ValueError("frame_id must increase within a session")
-        if jpeg_dimensions(jpeg) != (meta["width"], meta["height"]):
+        if (width, height) != (meta["width"], meta["height"]):
             raise ValueError("JPEG dimensions do not match metadata")
         return envelope, jpeg

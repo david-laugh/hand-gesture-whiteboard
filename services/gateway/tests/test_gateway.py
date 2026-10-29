@@ -29,3 +29,10 @@ class GatewayProtocolTests(unittest.TestCase):
         metadata = {"frame_id": 4, "captured_at_ms": 1, "width": 3, "height": 3}
         with self.assertRaises(ValueError):
             Contracts(Settings()).browser_frame(encode_frame(metadata, jpeg()), "session", 4, 2_000_000)
+
+    def test_c1_timestamp_jpeg_packet_receives_a_gateway_frame_id(self):
+        packet = (123).to_bytes(8, "big") + jpeg()
+        envelope, image = Contracts(Settings()).browser_frame(packet, "session", 6, 2_000_000)
+        self.assertEqual(envelope["frame_id"], 7)
+        self.assertEqual(envelope["captured_at_ms"], 123)
+        self.assertEqual(image, jpeg())

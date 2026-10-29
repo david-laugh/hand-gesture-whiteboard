@@ -1,58 +1,86 @@
 const $ = id => document.getElementById(id);
-const capture = document.createElement('canvas');
-const ctx = capture.getContext('2d');
-let stream, socket, timer, running = false, generation = 0, frameId = 0;
-function stop(message = '중지됨') {
-  running = false; generation++; clearTimeout(timer);
-  stream?.getTracks().forEach(track => track.stop()); stream = null;
-  if (socket) { socket.onclose = null; socket.close(); socket = null; }
-  $('video').srcObject = null; $('start').disabled = false; $('stop').disabled = true;
-  $('status').textContent = message;
+const video = $('video');
+const canvas = document.createElement('canvas');
+const context = canvas.getContext('2d');
+let socket, stream, timer, pinger, running = false, busy = false;
+let offset = 0, bestRtt = Infinity, reconnectTimer;
+
+function setStatus(text, state = 'off') {
+  $('status').textContent = text;
+  $('status').className = state;
 }
-async function sendFrame(token) {
-  if (!running || token !== generation) return;
-  try {
-    if (socket?.readyState === WebSocket.OPEN && socket.bufferedAmount < 256 * 1024) {
-      const video = $('video');
-      capture.width = Math.min(960, video.videoWidth);
-      capture.height = Math.round(video.videoHeight * capture.width / video.videoWidth);
-      ctx.save(); ctx.translate(capture.width, 0); ctx.scale(-1, 1); ctx.drawImage(video, 0, 0, capture.width, capture.height); ctx.restore();
-      const capturedAt = Date.now();
-      const blob = await new Promise(resolve => capture.toBlob(resolve, 'image/jpeg', 0.7));
-      if (!blob) throw new Error('카메라 프레임을 인코딩할 수 없습니다.');
-      const jpeg = new Uint8Array(await blob.arrayBuffer());
-      if (!running || token !== generation || socket?.readyState !== WebSocket.OPEN) return;
-      const id = frameId++;
-      const metadata = new TextEncoder().encode(JSON.stringify({frame_id: id, captured_at_ms: capturedAt, width: capture.width, height: capture.height, jpeg_quality: 70, mirrored: true}));
-      const packet = new Uint8Array(4 + metadata.length + jpeg.length);
-      new DataView(packet.buffer).setUint32(0, metadata.length); packet.set(metadata, 4); packet.set(jpeg, 4 + metadata.length);
-      socket.send(packet);
-    }
-    if (running && token === generation) timer = setTimeout(() => sendFrame(token), 50);
-  } catch (error) { stop(error.message); }
+
+function sendPing() {
+  if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type: 'ping', t0: Date.now()}));
 }
-$('start').onclick = async () => {
-  $('start').disabled = true; $('status').textContent = '카메라 권한 확인 중…';
-  const token = ++generation;
+
+function connect() {
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  socket = new WebSocket(`${protocol}//${location.host}/ws/stream`);
+  socket.binaryType = 'arraybuffer';
+  socket.onopen = () => {
+    bestRtt = Infinity;
+    setStatus('연결됨', 'on');
+    sendPing(); clearInterval(pinger); pinger = setInterval(sendPing, 5000);
+  };
+  socket.onmessage = event => {
+    try {
+      const message = JSON.parse(event.data);
+      if (message.type === 'pong') {
+        const now = Date.now(), rtt = now - message.t0;
+        if (rtt < bestRtt) { bestRtt = rtt; offset = message.server_ms - (message.t0 + now) / 2; }
+      } else if (message.message_type === 'error') {
+        $('message').textContent = `${message.code}: ${message.message}`;
+      }
+    } catch { $('message').textContent = '서버 응답을 읽을 수 없습니다.'; }
+  };
+  socket.onclose = () => {
+    clearInterval(pinger);
+    if (running) { setStatus('재연결 중', 'off'); reconnectTimer = setTimeout(connect, 1000); }
+    else setStatus('연결 대기 중', 'off');
+  };
+  socket.onerror = () => { $('message').textContent = '서버에 연결할 수 없습니다.'; };
+}
+
+function sendFrame() {
+  if (!running || !socket || socket.readyState !== WebSocket.OPEN || busy || socket.bufferedAmount > 0 || !video.videoWidth) return;
+  busy = true;
+  const width = Number($('width').value);
+  const height = Math.round(video.videoHeight * width / video.videoWidth);
+  canvas.width = width; canvas.height = height;
+  context.drawImage(video, 0, 0, width, height);
+  const capturedAt = Math.round(Date.now() + offset);
+  canvas.toBlob(async blob => {
+    try {
+      if (blob && socket?.readyState === WebSocket.OPEN) {
+        const timestamp = new ArrayBuffer(8);
+        new DataView(timestamp).setBigUint64(0, BigInt(capturedAt));
+        socket.send(new Blob([timestamp, blob]));
+      }
+    } finally { busy = false; }
+  }, 'image/jpeg', Number($('quality').value));
+}
+
+async function start() {
+  $('toggle').disabled = true; $('message').textContent = '';
   try {
-    if (!navigator.mediaDevices) throw new Error('카메라를 사용하려면 HTTPS 또는 localhost로 접속하세요.');
-    stream = await navigator.mediaDevices.getUserMedia({video: {width: 960, height: 540}, audio: false});
-    if (token !== generation) { stream.getTracks().forEach(track => track.stop()); return; }
-    $('video').srcObject = stream; await $('video').play();
-    $('video').parentElement.style.aspectRatio = `${$('video').videoWidth} / ${$('video').videoHeight}`;
-    frameId = 0;
-    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
-    socket.onmessage = event => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.message_type === 'hello') {
-          running = true; $('stop').disabled = false; $('status').textContent = '전송 중'; sendFrame(token);
-        } else if (message.message_type === 'error') $('status').textContent = `${message.code}: ${message.message}`;
-      } catch (error) { stop(error.message); }
-    };
-    socket.onclose = () => stop('연결이 종료되었습니다. 카메라 시작으로 새 세션을 여세요.');
-    socket.onerror = () => stop('게이트웨이에 연결할 수 없습니다.');
-  } catch (error) { stop(error.message); }
-};
-$('stop').onclick = () => stop();
-window.addEventListener('pagehide', () => stop());
+    if (!window.isSecureContext || !navigator.mediaDevices) throw new Error('카메라는 HTTPS 주소에서만 사용할 수 있습니다.');
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: 'environment'}, width: {ideal: 1280}, height: {ideal: 720}}});
+    video.srcObject = stream; await video.play();
+    running = true; connect();
+    timer = setInterval(sendFrame, 1000 / Number($('fps').value));
+    $('toggle').textContent = '촬영 중지'; $('toggle').className = 'stop';
+  } catch (error) { $('message').textContent = error.message; }
+  finally { $('toggle').disabled = false; }
+}
+
+function stop() {
+  running = false; busy = false; clearInterval(timer); clearInterval(pinger); clearTimeout(reconnectTimer);
+  socket?.close(); socket = null;
+  stream?.getTracks().forEach(track => track.stop()); stream = null; video.srcObject = null;
+  $('toggle').textContent = '촬영 시작'; $('toggle').className = '';
+}
+
+$('toggle').onclick = () => running ? stop() : start();
+$('fps').onchange = () => { if (running) { clearInterval(timer); timer = setInterval(sendFrame, 1000 / Number($('fps').value)); } };
+window.addEventListener('pagehide', stop);

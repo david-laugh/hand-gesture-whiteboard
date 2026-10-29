@@ -1,6 +1,7 @@
 import asyncio
 from collections import Counter
 from contextlib import asynccontextmanager, suppress
+import json
 from pathlib import Path
 import time
 import uuid
@@ -55,6 +56,7 @@ def create_app(settings=None, transport=None):
                 "drop_rate": counters["dropped"] / max(1, counters["received"])}
 
     @app.websocket("/ws")
+    @app.websocket("/ws/stream")
     async def stream(ws: WebSocket):
         if len(sessions) >= settings.max_sessions:
             await ws.close(code=1013)
@@ -97,7 +99,16 @@ def create_app(settings=None, transport=None):
                     return
                 data = event.get("bytes")
                 if data is None:
-                    await error("INVALID_FRAME", "Send a binary metadata + JPEG frame")
+                    text = event.get("text")
+                    if text:
+                        try:
+                            ping = json.loads(text)
+                        except ValueError:
+                            ping = {}
+                        if ping.get("type") == "ping":
+                            await send({"type": "pong", "t0": ping.get("t0"), "server_ms": now_ms()})
+                            continue
+                    await error("INVALID_FRAME", "Send a binary camera frame")
                     continue
                 try:
                     envelope, jpeg = await asyncio.to_thread(contracts.browser_frame, data, session_id,
@@ -116,8 +127,8 @@ def create_app(settings=None, transport=None):
         tasks = []
         try:
             await ws.accept()
-            await send({"message_type": "hello", "session_id": session_id, "schema_version": settings.schema_version,
-                        "transport": "mqtt"})
+            await send({"type": "hello", "message_type": "hello", "session_id": session_id,
+                        "schema_version": settings.schema_version, "transport": "mqtt", "server_ms": now_ms()})
             tasks = [asyncio.create_task(receive()), asyncio.create_task(worker())]
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in done:
