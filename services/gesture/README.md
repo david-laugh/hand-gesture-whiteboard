@@ -3,7 +3,7 @@
 | 항목 | 값 |
 |---|---|
 | Port | `8002` (internal only, HTTP는 확인·테스트용) |
-| 입력 | MQTT 구독 `{prefix}/landmarks/+` **또는** WebSocket `ws://gesture:8002/ws/landmarks` (둘 다 켜 둘 수 있음) |
+| 입력 | MQTT 구독 `{prefix}/landmarks/+` (WebSocket `ws://gesture:8002/ws/landmarks`는 기본 꺼짐) |
 | 출력 | MQTT 발행 `{prefix}/gestures/{session_id}` — [`gesture.schema.json`](../../shared/contracts/gesture.schema.json) |
 | QoS / retain | 0 / 없음 |
 | Dependencies | fastapi, uvicorn, paho-mqtt |
@@ -11,7 +11,7 @@
 ## 책임
 
 - Landmark 입력 → **gesture state machine** → semantic command 출력
-- 현재 구현: `IDLE`, `DRAW_START`, `DRAW_MOVE`, `DRAW_END` (검지 하나로 그리기)
+- 현재 구현: 그리기 `DRAW_*`, 지우개 `ERASE_*`, 되돌리기 `UNDO`, 펜 색·굵기 변경 (아래 "제스처" 표)
 - Debounce, pointer smoothing (One-Euro), `gesture_ms` 측정
 - 메시지가 `SESSION_GAP_MS` 동안 끊기면 그리던 획에 `DRAW_END` 발행
 
@@ -19,8 +19,8 @@
 
 | 방식 | 주소 | 켜고 끄기 | 비고 |
 |---|---|---|---|
-| MQTT | 구독 `{prefix}/landmarks/+` | `MQTT_INPUT_ENABLED` (기본 `true`) | vision이 MQTT로 바뀐 뒤의 경로 |
-| WebSocket | `ws://<host>:8002/ws/landmarks` | `WS_INPUT_ENABLED` (기본 `true`) | **현재 vision 코드의 경로** (`GESTURE_WS_URL`). C가 서버, vision이 client |
+| MQTT | 구독 `{prefix}/landmarks/+` | `MQTT_INPUT_ENABLED` (기본 `true`) | **현재 vision의 발행 경로** |
+| WebSocket | `ws://<host>:8002/ws/landmarks` | `WS_INPUT_ENABLED` (기본 `false`) | 예전 vision 경로. 필요할 때만 켬. C가 서버, vision이 client |
 
 - 두 방식 모두 같은 어댑터와 처리 함수를 쓰고, 결과는 `{prefix}/gestures/{session_id}`로 MQTT 발행한다.
 - WebSocket은 **단방향**: 텍스트 메시지 1개 = 프레임 1개, C는 응답을 보내지 않는다. 받은 순서대로 하나씩 처리한다.
@@ -38,6 +38,29 @@
 
 session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`로 바꾸고 경고 로그를 남긴다.
 
+## 제스처
+
+| 손 모양 | 결과 | 비고 |
+|---|---|---|
+| 검지만 폄 | `DRAW_START` / `DRAW_MOVE` / `DRAW_END` | pointer = 검지 끝. START에 `params.color`, `params.brush_size`(px) |
+| 집게 (엄지 끝 4와 검지 끝 8을 붙임) | `ERASE_START` / `ERASE_MOVE` / `ERASE_END` | pointer = 4와 8의 중간점. START에 `params.eraser_radius`(정규화). 다른 포즈보다 먼저 검사 |
+| 주먹 0.7초 | `UNDO` (1번) | pointer `null`. 획이 끝난 시점부터 잼 |
+| 브이 (검지 + 중지) 0.5초 | `IDLE` + `params.color` (1번) | 다음 펜 색. 세션별 순환, 이후 `DRAW_START`에 반영 |
+| 손바닥 (네 손가락) 0.5초 | `IDLE` + `params.brush_size` 또는 `params.eraser_radius` (1번) | 마지막으로 쓴 도구의 굵기 순환 (펜 4/8/16px, 지우개 지름 20/30/50px) |
+
+- **집게 판정**: dist(4,8) ÷ 손 크기. 진입 < `PINCH_ENTER_RATIO`(0.30), 지우는 중 유지 < `PINCH_EXIT_RATIO`(0.45).
+  두 값을 달리해서(히스테리시스) 경계에서 시작/끝이 떨리지 않는다.
+  주먹은 엄지가 접힌 검지 옆에 붙어 거리가 가까우므로, 검지가 `PINCH_INDEX_MIN_RATIO`(−0.15)보다 깊게 접혀 있으면 집게로 보지 않는다.
+- **그리기와 지우기는 동시에 되지 않는다.** 도구를 바꾸면 이전 도구의 `*_END`가 먼저 나가고 새 도구의 `*_START`가 나간다.
+- **일회성 명령** (주먹·브이·손바닥): 그리거나 지우는 중이 아닐 때만 나간다.
+  - `COMMAND_HOLD_MS`(500) 동안 유지하면 1번 발행 → 같은 자세를 계속 유지하면 다시 나가지 않음 (자세를 바꿔야 재발행)
+  - 명령 사이에는 `COMMAND_COOLDOWN_MS`(1000) 쿨다운
+  - 주먹(UNDO)은 `UNDO_HOLD_MS`(700) 유지. 획이 끝난 시점부터 새로 잰다 → **그리다 주먹으로 잠깐 접으면 UNDO가 나가지 않고**, 집게·검지에서 주먹으로 바꿔 0.7초 이상 유지하면 UNDO
+- **지우개 크기 변환**: canvas는 `eraser_radius × min(가로, 세로) × 2`를 지우개 지름(px)으로 쓴다 (1280×720 → 720).
+  그래서 지름 30px → `eraser_radius = 30 / (2 × 720) ≈ 0.0208`. 캔버스 크기가 다르면 `CANVAS_MIN_SIDE_PX` 조정.
+- 펜 색·굵기 설정은 세션에 남는다. 끊김 감시가 획을 닫아도 유지되고, `SESSION_TTL_S`(600초) 동안 메시지가 없으면 세션과 함께 사라진다.
+- canvas 확인: `params.color`·`brush_size`는 `DRAW_START`, `eraser_radius`는 `ERASE_START`에서만 읽는다 (`services/canvas/src/engine.py`).
+
 ## 그리기 판별
 
 - **손가락 펴짐**: (손목~손끝 거리 − 손목~둘째 마디 거리) ÷ 손 크기(손목~중지 시작 마디) > `FINGER_EXTENDED_RATIO`.
@@ -52,19 +75,18 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 
 - handedness는 쓰지 않는다. 손목(0)·검지 시작 마디(5)·새끼 시작 마디(17)의 **회전 방향(외적 부호)**만 본다.
   이 부호는 화면 안에서 손이 돌아가도 그대로이고, 번호가 좌우로 뒤집힐 때만 바뀐다.
-- 회전 방향이 `FLIP_NORMAL_SIGN`과 반대이고 **원래 번호로는 그리기 자세가 아닐 때만**,
-  검지↔새끼·중지↔약지 번호를 바꿔 다시 판별한다. 원래 번호로 이미 그리기 자세면 건드리지 않는다.
-- 보정으로 그리기 자세가 된 프레임의 pointer는 **원래 번호 20번 점(실제 검지 끝)**에서 가져온다.
+- 회전 방향이 `FLIP_NORMAL_SIGN`과 반대이고 **원래 번호로는 아무 포즈(집게·검지·브이·손바닥·주먹)도 안 나올 때만**,
+  검지↔새끼·중지↔약지 번호를 바꿔 모든 포즈를 다시 판별한다. 원래 번호로 이미 포즈가 나오면 건드리지 않는다.
+- 보정으로 나온 포즈의 pointer는 바뀐 번호 기준이다. 예: 그리기면 **원래 번호 20번 점(실제 검지 끝)**.
 - 보정이 적용된 프레임은 로그에 `"flip_fixed": true`로 표시된다.
 - 효과 (rec01): 짧은 선 구간의 그리기가 4프레임에서 37프레임으로 늘었다.
 
 **한계**
 - 실제로 **새끼만 편 자세**도 회전 방향이 반대로 판단되면 그리기로 인식될 수 있다.
 - 회전 방향 판단은 손이 옆으로 서 있을 때 틀릴 수 있다 (rec01에서 MediaPipe handedness와 약 90% 일치).
-  그래서 "원래 그리기 자세가 아닐 때만" 보정한다.
+  그래서 "원래 번호로 아무 포즈도 안 나올 때만" 보정한다.
 - 촬영 환경이 바뀌면(왼손, 전면 카메라, 좌우 반전 등) 정상 회전 방향이 바뀔 수 있다 → `FLIP_NORMAL_SIGN` 확인.
-- 지금은 그리기 자세 판별에만 적용한다. **나중에 지우개·줌 등 다른 제스처를 추가하면**, 회전 방향이 반대인 프레임은
-  랜드마크 번호 전체를 바꾼 뒤 모든 포즈를 다시 판별하도록 확장해야 한다.
+- 실제로 약지+새끼만 편 자세도 브이로 인식될 수 있다 (새끼만 편 자세가 그리기로 인식되는 것과 같은 이유).
 
 ### 촬영 안내 (rec01 녹화 분석 결과)
 - 원은 **화면 안쪽에서 작게** 그린다. 손목 쪽이 화면 가장자리를 넘으면 검지가 화면 안에 있어도 vision이 손을 놓친다
@@ -85,7 +107,7 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 |---|---|---|
 | `MQTT_ENABLED` | `true` | `false`면 MQTT 입력·발행 모두 끔 (HTTP·WS 입력만, 결과는 로그) |
 | `MQTT_INPUT_ENABLED` | `true` | `{prefix}/landmarks/+` 구독 여부 |
-| `WS_INPUT_ENABLED` | `true` | `/ws/landmarks` 엔드포인트 사용 여부 |
+| `WS_INPUT_ENABLED` | `false` | `/ws/landmarks` 엔드포인트 사용 여부 |
 | `MQTT_HOST` | `hgw-mqtt` | 로컬 실행 시 `localhost` |
 | `MQTT_PORT` | `1883` | 로컬 실행 시 `11883` |
 | `MQTT_TOPIC_PREFIX` | `hgw/v1` | |
@@ -96,6 +118,15 @@ session_id에 `[A-Za-z0-9_-]` 이외의 문자가 있으면(vision 형식) `_`�
 | `FINGER_EXTENDED_RATIO` | `0.15` | 손가락 "펴짐" 기준 |
 | `FLIP_FIX_ENABLED` | `true` | 손가락 번호 뒤집힘 보정 (아래 참고) |
 | `FLIP_NORMAL_SIGN` | `1` | 이 촬영 환경에서 정상인 회전 방향 (`1` 또는 `-1`, rec01 녹화 기준 `1`) |
+| `PINCH_ENTER_RATIO` / `PINCH_EXIT_RATIO` | `0.30` / `0.45` | 집게 진입 / 유지 기준 (dist(4,8) ÷ 손 크기) |
+| `PINCH_INDEX_MIN_RATIO` | `-0.15` | 검지가 이보다 깊게 접히면 집게 아님 (주먹 구분) |
+| `COMMAND_HOLD_MS` / `COMMAND_COOLDOWN_MS` | `500` / `1000` | 브이·손바닥 유지 시간 / 명령 쿨다운 |
+| `UNDO_HOLD_MS` | `700` | 주먹(UNDO) 유지 시간 (획이 끝난 시점부터) |
+| `PEN_COLORS` | canvas 팔레트 8색 | 쉼표로 구분한 `#RRGGBB` 목록, 첫 번째가 기본색 |
+| `BRUSH_SIZES_PX` / `BRUSH_DEFAULT_PX` | `4,8,16` / `8` | 펜 굵기 순환 |
+| `ERASER_SIZES_PX` / `ERASER_DEFAULT_PX` | `20,30,50` / `30` | 지우개 지름 순환 (px) |
+| `CANVAS_MIN_SIDE_PX` | `720` | 지우개 px → 정규화 반지름 변환용 canvas 짧은 변 |
+| `SESSION_TTL_S` | `600` | 이만큼 조용한 세션은 메모리에서 삭제 |
 | `ONE_EURO_MIN_CUTOFF` / `ONE_EURO_BETA` / `ONE_EURO_D_CUTOFF` | `1.0` / `10.0` / `1.0` | pointer 필터 |
 
 ## 로컬 실행
