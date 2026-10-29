@@ -1,50 +1,33 @@
-# gateway (Container A)
+# gateway
 
-> 상태: **Scaffold** — 애플리케이션 코드 없음. Container는 `sleep infinity`로 대기한다.
+브라우저 카메라 프레임을 받아 MQTT로 전송하는 Gateway입니다. 프레임을 처리하거나 다른 서비스에 요청하지 않습니다.
 
-| 항목 | 값 |
-|---|---|
-| Port | `8000` (host 노출: `${GATEWAY_HOST_PORT:-8000}`) |
-| 담당자 | _(TBD)_ |
-| Dependencies | fastapi, uvicorn, websockets, httpx |
+## 흐름
 
-## 책임
+`Browser webcam → WebSocket /ws → MQTT {MQTT_TOPIC_PREFIX}/frames/{session_id}`
 
-- Browser webcam frame 수신 (WebSocket `ws://localhost:8000/ws`)
-- Frontend(정적 페이지: webcam, canvas, skeleton overlay) 제공
-- `trace_id`, `session_id` 발급, `frame_id` 보존
-- 내부 서비스 orchestration: vision → gesture → canvas (순차 호출)
-- landmark를 Browser로 전달 (client-side skeleton overlay용)
-- Backpressure: session당 in-flight 1개, latest-wins drop
-- `gateway_ms`, `*_rtt_ms`, `input_fps`, `vision_fps`, `drop_rate` 측정
+WebSocket과 MQTT의 payload 형식은 같습니다. `[uint32 BE metadata length][UTF-8 metadata JSON][JPEG bytes]`이며, 메타데이터는 `shared/contracts/frame.schema.json`을 따릅니다. JPEG는 JSON이나 로그에 넣지 않습니다.
 
-## Input / Output
+각 WebSocket session은 대기 프레임을 하나만 유지합니다. 새 프레임이 도착하면 이전 대기 프레임을 버려 지연이 계속 쌓이지 않습니다.
 
-| 방향 | 형식 |
-|---|---|
-| Browser → gateway | WS binary `[uint32 meta_len][meta JSON][JPEG]` |
-| gateway → vision | `POST http://vision:8001/v1/detect` (FrameMessage + image/jpeg) |
-| gateway → gesture | `POST http://gesture:8002/v1/classify` (LandmarkMessage) |
-| gateway → canvas | `POST http://canvas:8003/v1/apply` (GestureMessage) |
-| gateway → Browser | WS JSON `result` (landmarks + gesture + canvas + timings) |
+## 실행
 
-Contract: [`docs/api-contract.md`](../../docs/api-contract.md)
-
-## Rules
-
-- Camera image는 **vision으로만** 보낸다. gesture/canvas/로그에 이미지를 남기지 않는다.
-- 내부 서비스 응답의 `trace_id`/`frame_id`가 요청과 다르면 오류로 처리한다.
-
-## 디렉터리
-
-```
-src/     # application code (예정)
-tests/   # tests (예정)
-```
-
-## 개발
+MQTT broker를 먼저 준비한 뒤 다음과 같이 실행합니다.
 
 ```bash
-docker compose up -d gateway
-docker compose exec gateway bash
+pip install -r requirements.txt
+MQTT_HOST=localhost MQTT_PORT=1883 uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
+
+`http://localhost:8000/`에서 카메라를 시작합니다. 카메라는 localhost 또는 HTTPS에서만 접근할 수 있습니다.
+
+## 환경 변수
+
+| 변수 | 기본값 | 설명 |
+| --- | --- | --- |
+| `MQTT_HOST` | `localhost` | MQTT broker 호스트 |
+| `MQTT_PORT` | `11883` | MQTT broker 포트 |
+| `MQTT_TOPIC_PREFIX` | `hgw/v1` | topic prefix |
+| `GATEWAY_TIMEOUT` | `3` | Browser 전송 timeout(초) |
+| `GATEWAY_MAX_FRAME_BYTES` | `2097152` | 허용할 최대 WebSocket 프레임 크기 |
+| `GATEWAY_MAX_SESSIONS` | `16` | 동시 WebSocket session 상한 |
